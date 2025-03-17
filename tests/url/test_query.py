@@ -1,0 +1,59 @@
+from escudeiro.url.query import Query
+
+
+def test_query():  # sourcery skip: extract-duplicate-method
+    # Test query load
+    query = Query("param1=value1&param2=value2")
+    assert query.params == {"param1": ["value1"], "param2": ["value2"]}
+
+    # Test query encode
+    query = Query("param1=value1&param2=value2")
+    assert query.encode() == "param1=value1&param2=value2"
+
+    # Test query no null equal returns empty param
+    query = Query("param1=&param2=value2")
+    assert query.omit_empty_equal() == "param1&param2=value2"
+
+    # Test query adds correctly
+    query = Query("param1=value1&param2=value2").add(param3="value3")
+    assert query.params == {
+        "param1": ["value1"],
+        "param2": ["value2"],
+        "param3": ["value3"],
+    }
+
+    # Test query set adds correctly
+    query = Query("param1=value1&param2=value2").set(param3="value3")
+    assert query.params == {"param3": ["value3"]}
+
+    # Test setitem works correctly
+    query = Query("param1=value1&param2=value2")
+    query["param3"] = "value3"
+    assert query.params == {
+        "param1": ["value1"],
+        "param2": ["value2"],
+        "param3": ["value3"],
+    }
+
+    # Test getitem works correctly
+    query = Query("param1=value1&param2=value2")
+    assert query["param1"] == ["value1"]
+
+    # Test removing a single parameter
+    q = Query("param1=value1&param2=value2").remove("param1")
+    assert q.encode() == "param2=value2"
+
+    # Test removing multiple parameters at once
+    q = Query("param1=value1&param2=value2&param3=value3").remove(
+        "param1", "param3"
+    )
+    assert q.encode() == "param2=value2"
+
+    # Test removing a non-existent parameter
+    q = Query("param1=value1").remove("param2")
+    assert q.encode() == "param1=value1"
+
+    # Test Query properly encodes slashes
+    q = Query("param1=va/lue").add({"param2": "val/ie"})
+
+    assert q.encode() == "param1=va%2Flue&param2=val%2Fie"

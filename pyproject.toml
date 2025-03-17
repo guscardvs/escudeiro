@@ -1,0 +1,65 @@
+[project]
+name = "escudeiro"
+version = "0.1.0"
+description = ""
+authors = [{ name = "Gustavo Cardoso" }]
+readme = "README.md"
+requires-python = ">=3.12, <4.0.0"
+dependencies = []
+
+[tool.poetry.build]
+script = "scripts/build-extension.py"
+
+[tool.poetry.group.lint.dependencies]
+ruff = "^0.9.9"
+basedpyright = "^1.28.1"
+
+
+[tool.poetry.group.build.dependencies]
+setuptools = "^75.8.2"
+maturin = "^1.8.2"
+
+
+[tool.poetry.group.test.dependencies]
+pytest = "^8.3.5"
+pytest-cov = "^6.0.0"
+
+
+[tool.poetry.group.compare.dependencies]
+gyver = "^5.2.0"
+
+[tool.ruff]
+line-length = 80
+
+[tool.ruff.lint]
+extend-select = ["I", "UP"]
+
+
+[tool.commitizen]
+name = "cz_conventional_commits"
+tag_format = "$version"
+version_scheme = "pep440"
+version_provider = "poetry"
+update_changelog_on_bump = true
+major_version_zero = true
+version_files = ["escudeiro.__version__.py:__version__"]
+
+[tool.basedpyright]
+typeCheckingMode = "recommended"
+
+[tool.pytest.ini_options]
+# asyncio_mode = "auto"
+addopts = [
+    "--cov=escudeiro/",
+    "--cov=tests",
+    "--cov-report=html",
+    "--cov-config=.coveragerc",
+    "--no-cov-on-fail",
+    "--cov-fail-under=80",
+    "-sv",
+    "--maxfail=1",
+]
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0", "maturin>=1.8.0,<2.0"]
+build-backend = "poetry.core.masonry.api"
