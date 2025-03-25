@@ -1,0 +1,446 @@
+"""Utilities for safer type casting and function execution.
+
+This module provides functions for safely performing type casting operations
+and controlling function execution patterns.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import functools
+import typing
+from collections.abc import Awaitable, Callable, Coroutine
+from contextlib import AbstractAsyncContextManager, AbstractContextManager
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Concatenate,
+    Literal,
+    final,
+    overload,
+)
+
+from escudeiro.misc.contextx import AsyncContextWrapper, is_async_context
+
+
+def safe_cast[V, T, D](
+    caster: Callable[[V], T],
+    value: V,
+    *ignore_childof: type[Exception],
+    default: D = None,
+) -> T | D:
+    """Safely casts a value using the provided casting function.
+
+    Attempts to cast the given value using the casting function. If the casting
+    operation raises any of the specified exceptions, returns the default value.
+
+    Args:
+        caster: A function that converts the input value to the target type.
+        value: The value to be cast.
+        *ignore_childof: Exception types to catch. Defaults to (TypeError, ValueError)
+                         if none are specified.
+        default: The value to return if casting fails. Defaults to None.
+
+    Returns:
+        The result of the casting operation if successful, otherwise the default value.
+    """
+    if not ignore_childof:
+        ignore_childof = (TypeError, ValueError)
+
+    try:
+        return caster(value)
+    except ignore_childof:
+        return default
+
+
+async def asafe_cast[V, D, T](
+    caster: Callable[[V], Awaitable[T]],
+    value: V,
+    *ignore_childof: type[Exception],
+    default: D = None,
+) -> T | D:
+    """Safely casts a value using the provided asynchronous casting function.
+
+    Asynchronous version of safe_cast. Attempts to cast the given value using the
+    asynchronous casting function. If the casting operation raises any of the
+    specified exceptions, returns the default value.
+
+    Args:
+        caster: An asynchronous function that converts the input value to the target type.
+        value: The value to be cast.
+        *ignore_childof: Exception types to catch. Defaults to (TypeError, ValueError)
+                         if none are specified.
+        default: The value to return if casting fails. Defaults to None.
+
+    Returns:
+        The result of the casting operation if successful, otherwise the default value.
+    """
+    if not ignore_childof:
+        ignore_childof = (TypeError, ValueError)
+    try:
+        return await caster(value)
+    except ignore_childof:
+        return default
+
+
+def call_once[T](func: Callable[[], T]) -> Callable[[], T]:
+    """Returns a wrapper that ensures the wrapped function is called only once.
+
+    Creates a wrapper around the provided function that caches the result of the
+    first call. Subsequent calls return the cached result without executing
+    the original function again.
+
+    Args:
+        func: The function to be wrapped. Must take no arguments.
+
+    Returns:
+        A wrapped version of the function that executes at most once.
+    """
+    sentinel: Any = object()
+    output = sentinel
+
+    @functools.wraps(func)
+    def wrapper() -> T:
+        nonlocal output
+        if output is sentinel:
+            output = func()
+        return output
+
+    return wrapper
+
+
+type AsyncFunc[**P, T] = Callable[P, Coroutine[Any, Any, T]]
+type AsAsyncFactory[**P, T] = Callable[
+    Concatenate[Callable[P, T], P], Coroutine[Any, Any, T]
+]
+
+if TYPE_CHECKING:
+    asyncio.to_thread = typing.cast(AsAsyncFactory, asyncio.to_thread)
+
+
+@overload
+def as_async[**P, T](
+    func: None = None,
+    /,
+    *,
+    cast: AsAsyncFactory[P, T] = asyncio.to_thread,
+) -> Callable[[Callable[P, T]], AsyncFunc[P, T]]: ...
+
+
+@overload
+def as_async[**P, T](
+    func: AsyncFunc[P, T],
+    /,
+) -> AsyncFunc[P, T]: ...
+
+
+@overload
+def as_async[**P, T](
+    func: Callable[P, T],
+    /,
+) -> AsyncFunc[P, T]: ...
+
+
+def as_async[**P, T](
+    func: Callable[P, T] | AsyncFunc[P, T] | None = None,
+    /,
+    *,
+    cast: AsAsyncFactory[P, T] = asyncio.to_thread,
+) -> AsyncFunc[P, T] | Callable[[Callable[P, T]], AsyncFunc[P, T]]:
+    """Convert a synchronous function to an asynchronous one.
+
+    If the function is already asynchronous, returns it unchanged.
+    Otherwise, wraps it using the specified casting method (defaults to asyncio.to_thread).
+
+    Can be used as a decorator with or without arguments.
+
+    Args:
+        func: The function to convert to asynchronous. If None, returns a decorator.
+        cast: A factory function that converts a synchronous function to asynchronous.
+            Defaults to asyncio.to_thread, which runs the function in a separate thread.
+
+    Returns:
+        An asynchronous version of the input function, or a decorator that produces one.
+
+    Examples:
+        ```python
+        # Basic usage as a decorator
+        @as_async
+        def read_file(path):
+            with open(path) as f:
+                return f.read()
+
+        # With custom executor
+        @as_async(cast=my_custom_executor)
+        def process_data(data):
+            return expensive_calculation(data)
+
+        # Direct usage
+        async_read = as_async(read_file)
+        ```
+    """
+
+    def outer(func: Callable[P, T] | AsyncFunc[P, T]) -> AsyncFunc[P, T]:
+        if asyncio.iscoroutinefunction(func):
+            return func
+        elif TYPE_CHECKING:
+            func = typing.cast(Callable[P, T], func)
+
+        @functools.wraps(func)
+        async def _inner(*args: P.args, **kwargs: P.kwargs) -> T:
+            return await cast(func, *args, **kwargs)
+
+        return _inner
+
+    if func is None:
+        return outer
+    return outer(func)
+
+
+def cache[**P, T](f: Callable[P, T]) -> Callable[P, T]:
+    """Simple wrapper around functools.cache to preserve function signature.
+
+    Provides memoization for the wrapped function, caching return values based on arguments.
+    This is a thin wrapper over functools.cache that preserves proper type annotations.
+
+    Args:
+        f: The function to cache.
+
+    Returns:
+        A memoized version of the function with proper type annotations.
+
+    Examples:
+        ```python
+        @cache
+        def fibonacci(n):
+            if n <= 1:
+                return n
+            return fibonacci(n-1) + fibonacci(n-2)
+        ```
+    """
+    return typing.cast(Callable[P, T], functools.cache(f))  # pyright: ignore[reportInvalidCast]
+
+
+@overload
+def make_noop[T](
+    *, returns: T = None, asyncio: Literal[False] = False
+) -> Callable[..., T]: ...
+
+
+@overload
+def make_noop[T](
+    *, returns: T = None, asyncio: Literal[True]
+) -> Callable[..., Coroutine[Any, Any, T]]: ...
+
+
+def make_noop[T](
+    *, returns: T = None, asyncio: bool = False
+) -> Callable[..., T] | Callable[..., Coroutine[Any, Any, T]]:
+    """Creates a no-operation function that accepts any arguments and returns a fixed value.
+
+    Useful for creating placeholders, stubs, or disabling functionality temporarily.
+
+    Args:
+        returns: The value the function should return. Defaults to None.
+        asyncio: Whether to create an async function. Defaults to False.
+
+    Returns:
+        A function that ignores all arguments and returns the specified value,
+        either synchronously or asynchronously based on the asyncio parameter.
+
+    Examples:
+        ```python
+        # Synchronous no-op
+        log_function = make_noop()
+
+        # No-op with custom return value
+        get_user = make_noop(returns={"id": 0, "name": "Guest"})
+
+        # Async no-op
+        async_operation = make_noop(asyncio=True, returns={"status": "success"})
+        ```
+    """
+
+    def _noop(*args: Any, **kwargs: Any) -> T:
+        del args, kwargs
+        return returns
+
+    return _noop if not asyncio else as_async(_noop)
+
+
+def do_with[**P, T](
+    context_manager: AbstractContextManager,
+    func: Callable[P, T],
+    *args: P.args,
+    **kwargs: P.kwargs,
+) -> T:
+    """Executes a function within the context of a context manager.
+
+    Allows for functional-style usage of context managers by automatically
+    entering the context, executing the function, and exiting the context.
+
+    Args:
+        context_manager: The context manager to use.
+        func: The function to execute within the context.
+        *args: Positional arguments to pass to the function.
+        **kwargs: Keyword arguments to pass to the function.
+
+    Returns:
+        The result of calling the function with the specified arguments.
+
+    Examples:
+        ```python
+        # Execute in a transaction
+        result = do_with(
+            db.transaction(),
+            create_user,
+            username="johndoe",
+            email="john@example.com"
+        )
+        ```
+    """
+    with context_manager:
+        return func(*args, **kwargs)
+
+
+async def asyncdo_with[**P, T](
+    context_manager: AbstractContextManager | AbstractAsyncContextManager,
+    func: Callable[P, T] | AsyncFunc[P, T],
+    *args: P.args,
+    **kwargs: P.kwargs,
+) -> T:
+    """Executes a function within an async or sync context manager.
+
+    Asynchronous version of do_with. Works with both synchronous and
+    asynchronous context managers and functions.
+
+    Args:
+        context_manager: The context manager to use. Can be synchronous or asynchronous.
+        func: The function to execute within the context. Can be synchronous or asynchronous.
+        *args: Positional arguments to pass to the function.
+        **kwargs: Keyword arguments to pass to the function.
+
+    Returns:
+        The result of calling the function with the specified arguments.
+
+    Examples:
+        ```python
+        # With async context manager and function
+        result = await asyncdo_with(
+            async_db.transaction(),
+            async_create_user,
+            username="johndoe"
+        )
+
+        # With sync context manager and async function
+        result = await asyncdo_with(
+            lock_manager(),
+            async_process_data,
+            data=payload
+        )
+        ```
+    """
+    if not is_async_context(context_manager):
+        context_manager = AsyncContextWrapper(context_manager)
+
+    async with context_manager:
+        return await as_async(func)(*args, **kwargs)  # pyright: ignore[reportReturnType]
+
+
+@final
+class FrozenCoroutine[T]:
+    """A coroutine wrapper that ensures the wrapped coroutine is executed at most once.
+
+    When awaited multiple times, the coroutine is executed only on the first await.
+    Subsequent awaits return the cached result without re-executing the coroutine.
+    Thread-safe through the use of an asyncio.Lock.
+
+    Attributes:
+        _coro: The wrapped coroutine.
+        _lock: Lock to ensure thread safety.
+        _value: Cached result after first execution, or sentinel if not yet executed.
+
+    Examples:
+        ```python
+        # Direct usage
+        async def fetch_data():
+            print("Fetching data...")
+            return await api.get_data()
+
+        frozen = FrozenCoroutine(fetch_data())
+
+        # First await executes the coroutine
+        result1 = await frozen  # Prints "Fetching data..."
+
+        # Second await returns cached result
+        result2 = await frozen  # No print, returns same result
+        ```
+    """
+
+    _sentinel: Any = object()
+
+    def __init__(self, coro: Coroutine[Any, Any, T]) -> None:
+        """Initialize with a coroutine to be executed at most once.
+
+        Args:
+            coro: The coroutine to wrap.
+        """
+        self._coro = coro
+        self._lock = asyncio.Lock()
+        self._value = self._sentinel
+
+    async def _await(self) -> T:
+        """Internal method that handles the actual awaiting logic.
+
+        Ensures the coroutine is executed at most once and returns
+        the cached result for subsequent calls.
+
+        Returns:
+            The result of the coroutine execution.
+        """
+        async with self._lock:
+            if self._value is not self._sentinel:
+                return self._value
+            self._value = await self._coro
+            return self._value
+
+    def __await__(self):
+        return self._await().__await__()
+
+    @classmethod
+    def decorate[**P](
+        cls, func: Callable[P, Coroutine[Any, Any, T]]
+    ) -> Callable[P, FrozenCoroutine[T]]:
+        """Decorator that wraps a coroutine-returning function to ensure
+        each returned coroutine is executed at most once.
+
+        Args:
+            func: A function that returns a coroutine.
+
+        Returns:
+            A function that returns a FrozenCoroutine wrapping the original
+            function's coroutine.
+
+        Examples:
+            ```python
+            @FrozenCoroutine.decorate
+            async def fetch_user(user_id):
+                print(f"Fetching user {user_id}")
+                return await api.get_user(user_id)
+
+            # Creates a FrozenCoroutine
+            user_coro = fetch_user(123)
+
+            # First await executes
+            user1 = await user_coro  # Prints "Fetching user 123"
+
+            # Second await returns cached result
+            user2 = await user_coro  # No print, returns same result
+            ```
+        """
+
+        @functools.wraps(func)
+        def _wrapper(*args: P.args, **kwargs: P.kwargs) -> FrozenCoroutine[T]:
+            return FrozenCoroutine(func(*args, **kwargs))
+
+        return _wrapper

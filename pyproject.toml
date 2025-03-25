@@ -46,6 +46,14 @@ version_files = ["escudeiro.__version__.py:__version__"]
 
 [tool.basedpyright]
 typeCheckingMode = "recommended"
+reportAny = false
+reportExplicitAny = false
+reportMissingTypeArgument = false
+reportUnknownArgumentType = false
+reportUnknownParameterType = false
+reportUnknownLambdaType = false
+reportUnknownVariableType = false
+reportUnknownMemberType = false
 
 [tool.pytest.ini_options]
 # asyncio_mode = "auto"
