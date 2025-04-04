@@ -4,11 +4,29 @@ from typing import Any, final, override
 
 from typing_extensions import TypeIs
 
+from escudeiro.data import data
+
 
 @final
+@data
 class AsyncContextWrapper[T](AbstractAsyncContextManager):
-    def __init__(self, context: AbstractContextManager[T]):
-        self.context = context
+    """Wraps a synchronous context manager to be used in an asynchronous context.
+
+    This class allows using a synchronous context manager in an asynchronous
+    context (e.g., using `async with`), by delegating context management
+    operations to the wrapped synchronous context manager.
+
+    Args:
+        context: The synchronous context manager to wrap.
+
+    Methods:
+        __enter__: Enters the synchronous context.
+        __exit__: Exits the synchronous context.
+        __aenter__: Asynchronously enters the synchronous context.
+        __aexit__: Asynchronously exits the synchronous context.
+    """
+
+    context: AbstractContextManager[T]
 
     def __enter__(self) -> T:
         return self.context.__enter__()
@@ -38,4 +56,16 @@ class AsyncContextWrapper[T](AbstractAsyncContextManager):
 def is_async_context[T](
     context: AbstractContextManager[T] | AbstractAsyncContextManager[T],
 ) -> TypeIs[AbstractAsyncContextManager[T]]:
+    """Checks whether the given context manager is asynchronous.
+
+    This function takes a lightweight approach by checking for the presence of
+    `__aenter__` and `__aexit__` rather than using `isinstance`. This avoids
+    unnecessary class hierarchy resolution while still providing a reliable check.
+
+    Args:
+        context: The context manager to check.
+
+    Returns:
+        `True` if the context manager is asynchronous, otherwise `False`.
+    """
     return hasattr(context, "__aenter__") and hasattr(context, "__aexit__")

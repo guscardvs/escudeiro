@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from typing import Final, Protocol, Self, override
+from typing import Protocol, Self, override
+
+from escudeiro.data import data
 
 
 class Wrappable(Protocol):
@@ -8,22 +10,14 @@ class Wrappable(Protocol):
     def encode(self) -> str: ...
 
 
+@data(frozen=False)
 class Wrapped[T: Wrappable]:
-    __slots__: Final[tuple[str, ...]] = ("_internal",)
-
-    def __init__(self, internal: T) -> None:
-        self._internal: T = internal
-
-    def set_internal(self, internal: T) -> None:
-        self._internal = internal
-
-    def get_internal(self) -> T:
-        return self._internal
+    internal: T
 
     @classmethod
     def from_internal(cls, internal: T) -> Self:
         self = object.__new__(cls)
-        self._internal = internal
+        self.internal = internal
         return self
 
     @override
@@ -31,15 +25,15 @@ class Wrapped[T: Wrappable]:
         if self is other:
             return True
         if isinstance(other, str):
-            return self._internal.encode() == other
+            return self.internal.encode() == other
         if isinstance(other, type(self)):
-            return self._internal.compare(other.get_internal())
+            return self.internal.compare(other.internal)
         return False
 
     @override
     def __str__(self):
-        return self._internal.encode()
+        return self.internal.encode()
 
     @override
     def __repr__(self):
-        return f"{self.__class__.__name__}({self._internal!r})"
+        return f"{self.__class__.__name__}({self.internal!r})"

@@ -2,8 +2,7 @@ import pathlib
 from collections.abc import Collection
 from typing import Self
 
-from escudeiro_pyrs import url
-
+from escudeiro.escudeiro_pyrs import url
 from escudeiro.url.mixins import Wrapped
 
 
@@ -12,36 +11,36 @@ class Path(Wrapped[url.Path]):
         super().__init__(url.Path(pathstr))
 
     def encode(self) -> str:
-        return self._internal.encode()
+        return self.internal.encode()
 
     def add(self, path: str | pathlib.Path) -> Self:
         if isinstance(path, str):
-            self._internal.add(path)
+            self.internal.add(path)
         else:
-            self._internal.add_path(path)
+            self.internal.add_path(path)
         return self
 
     def set(self, path: str | pathlib.Path) -> Self:
-        self._internal.clear()
+        self.internal.clear()
         return self.add(path)
 
     @property
     def isdir(self) -> bool:
-        return self._internal.is_dir()
+        return self.internal.is_dir()
 
     @property
     def isfile(self) -> bool:
         return not self.isdir
 
     def normalize(self) -> Self:
-        self._internal.normalize()
+        self.internal.normalize()
         return self
 
     def copy(self) -> Self:
         instance = object.__new__(type(self))
-        instance._internal = self._internal.copy()
+        instance.internal = self.internal.copy()
         return instance
 
     @property
     def segments(self) -> Collection[str]:
-        return self._internal.segments
+        return self.internal.segments

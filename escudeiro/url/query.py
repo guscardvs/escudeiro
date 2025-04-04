@@ -3,8 +3,7 @@ from __future__ import annotations
 from collections.abc import Collection, Mapping
 from typing import Self
 
-from escudeiro_pyrs import url
-
+from escudeiro.escudeiro_pyrs import url
 from escudeiro.url.mixins import Wrapped
 
 
@@ -16,41 +15,41 @@ class Query(Wrapped[url.Query]):
         self, args: Mapping[str, str] | None = None, /, **params: str
     ) -> Self:
         if args:
-            self._internal.add_map(args)
+            self.internal.add_map(args)
         if params:
-            self._internal.add_map(params)
+            self.internal.add_map(params)
         return self
 
     def set(
         self, args: Mapping[str, str] | None = None, /, **params: str
     ) -> Self:
         if args:
-            self._internal.set_map(args)
+            self.internal.set_map(args)
         if params:
-            self._internal.set_map(params)
+            self.internal.set_map(params)
         return self
 
     def copy(self) -> Self:
         query = object.__new__(type(self))
-        query._internal = self._internal.copy()
+        query.internal = self.internal.copy()
         return query
 
     def encode(self) -> str:
-        return self._internal.encode()
+        return self.internal.encode()
 
     def omit_empty_equal(self) -> str:
-        return self._internal.omit_empty_equal()
+        return self.internal.omit_empty_equal()
 
     def sort(self) -> Self:
-        self._internal.sort()
+        self.internal.sort()
         return self
 
     def first(self) -> Mapping[str, str]:
-        return self._internal.first()
+        return self.internal.first()
 
     @property
     def params(self) -> Mapping[str, Collection[str]]:
-        return self._internal.params
+        return self.internal.params
 
     def __setitem__(self, key: str, value: str) -> None:
         _ = self.add({key: value})
@@ -60,5 +59,5 @@ class Query(Wrapped[url.Query]):
 
     def remove(self, *keys: str) -> Self:
         for key in keys:
-            self._internal.remove(key)
+            self.internal.remove(key)
         return self

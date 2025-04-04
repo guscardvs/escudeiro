@@ -9,8 +9,20 @@ from __future__ import annotations
 import asyncio
 import functools
 import typing
-from collections.abc import Awaitable, Callable, Coroutine
-from contextlib import AbstractAsyncContextManager, AbstractContextManager
+from collections.abc import (
+    AsyncIterable,
+    Awaitable,
+    Callable,
+    Coroutine,
+    Generator,
+    Iterable,
+)
+from contextlib import (
+    AbstractAsyncContextManager,
+    AbstractContextManager,
+    contextmanager,
+)
+from datetime import date, datetime, time, tzinfo
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -444,3 +456,55 @@ class FrozenCoroutine[T]:
             return FrozenCoroutine(func(*args, **kwargs))
 
         return _wrapper
+
+
+def as_datetime(value: date, tz: tzinfo | None = None) -> datetime:
+    return datetime(value.year, value.month, value.day, tzinfo=tz)
+
+
+def join_into_datetime(
+    dt: date, tm: time, tz: tzinfo | None = None
+) -> datetime:
+    return as_datetime(dt, tz).replace(
+        hour=tm.hour,
+        minute=tm.minute,
+        second=tm.second,
+        microsecond=tm.microsecond,
+    )
+
+
+async def as_async_iterable[T](iterable: Iterable[T]) -> AsyncIterable[T]:
+    for item in iterable:
+        yield item
+
+
+@contextmanager
+def raise_insteadof(
+    insteadof: type[Exception], exc: type[Exception] = Exception, *args: Any
+) -> Generator[None, None, None]:
+    """Replaces an exception with another within a context.
+
+    This context manager catches exceptions of type `insteadof` and raises a new
+    exception of type `exc` instead, optionally passing arguments to the new exception.
+
+    Args:
+        insteadof: The exception type to catch.
+        exc: The exception type to raise instead. Defaults to `Exception`.
+        *args: Arguments to pass to the new exception.
+
+    Raises:
+        exc: If `insteadof` is raised, it is replaced with an instance of `exc`.
+
+    Example:
+        ```python
+        try:
+            with raise_insteadof(KeyError, ValueError, "Invalid key!"):
+                raise KeyError("Missing key")
+        except ValueError as e:
+            print(e)  # Outputs: "Invalid key!"
+        ```
+    """
+    try:
+        yield
+    except insteadof:
+        raise exc(*args) from None

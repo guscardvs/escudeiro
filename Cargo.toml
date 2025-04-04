@@ -1,14 +1,17 @@
 [package]
-name = "escudeiro-pyrs"
+name = "escudeiro"
 version = "0.1.0"
 edition = "2024"
 
 [lib]
-name = "escudeiro_pyrs"
+name = "escudeiro"
 crate-type = ["cdylib"]
 
 [dependencies]
+chrono = "0.4.40"
+chrono-tz = "0.10.3"
+cron = "0.15.0"
 once_cell = "1.20.3"
-pyo3 = { version = "0.23.5", features = ["extension-module"] }
+pyo3 = { version = "0.23.5", features = ["extension-module", "chrono"] }
 regex = "1.11.1"
 url = "2.5.4"

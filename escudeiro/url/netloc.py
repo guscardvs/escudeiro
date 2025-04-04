@@ -1,7 +1,6 @@
 from typing import Self
 
-from escudeiro_pyrs import url
-
+from escudeiro.escudeiro_pyrs import url
 from escudeiro.url.mixins import Wrapped
 
 
@@ -11,29 +10,29 @@ class Netloc(Wrapped[url.Netloc]):
 
     @property
     def username(self) -> str | None:
-        return self._internal.username
+        return self.internal.username
 
     @property
     def password(self) -> str | None:
-        return self._internal.password
+        return self.internal.password
 
     @property
     def port(self) -> int | None:
-        return self._internal.port
+        return self.internal.port
 
     @port.setter
     def port(self, port: int) -> None:
-        self._internal.port = port
+        self.internal.port = port
 
     @property
     def host(self) -> str:
-        return self._internal.host
+        return self.internal.host
 
     def encode(self) -> str:
-        return self._internal.encode()
+        return self.internal.encode()
 
     def parse(self, netloc: str) -> Self:
-        self._internal.parse(netloc)
+        self.internal.parse(netloc)
         return self
 
     def set(
@@ -43,21 +42,21 @@ class Netloc(Wrapped[url.Netloc]):
         username: str | None = None,
         password: str | None = None,
     ) -> Self:
-        self._internal.set(host, port, username, password)
+        self.internal.set(host, port, username, password)
         return self
 
     def merge(self, other: Self) -> Self:
         new_instance = object.__new__(type(self))
-        new_instance._internal = self._internal.merge(other._internal)
+        new_instance.internal = self.internal.merge(other.internal)
         return new_instance
 
     def merge_left(self, other: Self) -> Self:
         new_instance = object.__new__(type(self))
-        new_instance._internal = self._internal.merge_left(other._internal)
+        new_instance.internal = self.internal.merge_left(other.internal)
         return new_instance
 
     def merge_inplace(self, other: Self) -> Self:
-        self._internal.merge_inplace(other._internal)
+        self.internal.merge_inplace(other.internal)
         return self
 
     @classmethod
@@ -69,12 +68,12 @@ class Netloc(Wrapped[url.Netloc]):
         port: int | None = None,
     ) -> Self:
         self = object.__new__(cls)
-        self._internal = url.Netloc.from_args(
+        self.internal = url.Netloc.from_args(
             host=host, port=port, username=username, password=password
         )
         return self
 
     def copy(self) -> Self:
         new_instance = object.__new__(type(self))
-        new_instance._internal = self._internal.copy()
+        new_instance.internal = self.internal.copy()
         return new_instance

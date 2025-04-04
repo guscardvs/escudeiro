@@ -1,0 +1,499 @@
+import asyncio
+import contextlib
+from collections.abc import AsyncIterable, Callable
+from datetime import UTC, date, datetime, time
+from typing import Any
+from unittest.mock import AsyncMock, Mock
+
+import pytest
+
+from escudeiro.misc.functions import (
+    FrozenCoroutine,
+    as_async,
+    as_async_iterable,
+    as_datetime,
+    asafe_cast,
+    asyncdo_with,
+    cache,
+    call_once,
+    do_with,
+    join_into_datetime,
+    make_noop,
+    raise_insteadof,
+    safe_cast,
+)
+
+
+class TestSafeCast:
+    def test_successful_cast(self):
+        result = safe_cast(int, "123")
+        assert result == 123
+
+    def test_failed_cast_default_exceptions(self):
+        result = safe_cast(int, "abc")
+        assert result is None
+
+    def test_failed_cast_custom_exceptions(self):
+        def custom_caster(value: int):
+            if value < 0:
+                raise ValueError("Cannot be negative")
+            if value > 100:
+                raise RuntimeError("Too large")
+            return value
+
+        result = safe_cast(custom_caster, -10, ValueError)
+        assert result is None
+
+        result = safe_cast(custom_caster, 200, RuntimeError)
+        assert result is None
+
+        # Should not catch exceptions not in the ignore list
+        with pytest.raises(RuntimeError):
+            _ = safe_cast(custom_caster, 200, ValueError)
+
+    def test_custom_default_value(self):
+        result = safe_cast(int, "abc", default=42)
+        assert result == 42
+
+
+class TestAsafeCast:
+    async def test_successful_cast(self):
+        async def async_int(value: Any):
+            await asyncio.sleep(0.01)
+            return int(value)
+
+        result = await asafe_cast(async_int, "123")
+        assert result == 123
+
+    async def test_failed_cast_default_exceptions(self):
+        async def async_int(value: Any):
+            await asyncio.sleep(0.01)
+            return int(value)
+
+        result = await asafe_cast(async_int, "abc")
+        assert result is None
+
+    async def test_failed_cast_custom_exceptions(self):
+        async def custom_caster(value: float):
+            await asyncio.sleep(0.01)
+            if value < 0:
+                raise ValueError("Cannot be negative")
+            if value > 100:
+                raise RuntimeError("Too large")
+            return value
+
+        result = await asafe_cast(custom_caster, -10, ValueError)
+        assert result is None
+
+        result = await asafe_cast(custom_caster, 200, RuntimeError)
+        assert result is None
+
+        # Should not catch exceptions not in the ignore list
+        with pytest.raises(RuntimeError):
+            _ = await asafe_cast(custom_caster, 200, ValueError)
+
+    async def test_custom_default_value(self):
+        async def async_int(value: Any):
+            await asyncio.sleep(0.01)
+            return int(value)
+
+        result = await asafe_cast(async_int, "abc", default=42)
+        assert result == 42
+
+
+class TestCallOnce:
+    def test_function_called_once(self):
+        mock_func = Mock(return_value=42)
+        wrapped = call_once(mock_func)
+
+        # First call
+        result1 = wrapped()
+        assert result1 == 42
+        mock_func.assert_called_once()
+
+        # Second call
+        result2 = wrapped()
+        assert result2 == 42
+        mock_func.assert_called_once()  # Still only called once
+
+    def test_exception_not_cached(self):
+        # If the function raises an exception, it shouldn't be cached
+        side_effects = [ValueError("Error"), 42]
+        mock_func = Mock(side_effect=side_effects)
+        wrapped = call_once(mock_func)
+
+        # First call - should raise
+        with pytest.raises(ValueError):
+            wrapped()
+
+        # Second call - should return 42
+        result = wrapped()
+        assert result == 42
+        assert mock_func.call_count == 2
+
+
+class TestAsAsync:
+    def test_async_function_unchanged(self):
+        async def async_func():
+            return 42
+
+        result = as_async(async_func)
+        assert result is async_func
+        assert asyncio.iscoroutinefunction(result)
+
+    def test_sync_function_converted(self):
+        def sync_func():
+            return 42
+
+        result = as_async(sync_func)
+        assert result is not sync_func
+        assert asyncio.iscoroutinefunction(result)
+
+    async def test_converted_function_execution(self):
+        def sync_func(x: float, y: float):
+            return x + y
+
+        async_func = as_async(sync_func)
+        result = await async_func(3, 4)
+        assert result == 7
+
+    async def test_custom_cast_function(self):
+        def sync_func(x: float):
+            return x * 2
+
+        async def custom_cast[T, U: float | int](
+            func: Callable[[T], U], x: T
+        ) -> float:
+            await asyncio.sleep(0.01)
+            return func(x) + 1
+
+        async_func = as_async(cast=custom_cast)(sync_func)
+        result = await async_func(5)
+        assert result == 11  # (5 * 2) + 1
+
+    def test_decorator_usage(self):
+        # No arguments
+        @as_async
+        def func1(x: float):
+            return x * 2
+
+        assert asyncio.iscoroutinefunction(func1)
+
+        # With arguments
+        async def custom_cast(func: Callable[[float], float], x: float):
+            await asyncio.sleep(0.01)
+            return func(x) + 1
+
+        @as_async(cast=custom_cast)
+        def func2(x: float):
+            return x * 2
+
+        assert asyncio.iscoroutinefunction(func2)
+
+
+class TestCache:
+    def test_caching_behavior(self):
+        call_count = 0
+
+        @cache
+        def fibonacci(n: int):
+            nonlocal call_count
+            call_count += 1
+            if n <= 1:
+                return n
+            return fibonacci(n - 1) + fibonacci(n - 2)
+
+        # First call, should calculate everything
+        result1 = fibonacci(10)
+        initial_call_count = call_count
+        assert initial_call_count > 10  # Should have made recursive calls
+
+        # Reset count
+        call_count = 0
+
+        # Second call, should use cache
+        result2 = fibonacci(10)
+        assert call_count == 0  # No additional calls
+        assert result1 == result2
+
+
+class TestMakeNoop:
+    def test_sync_noop(self):
+        noop = make_noop()
+        assert noop() is None
+        assert noop(1, 2, 3, key="value") is None
+
+    def test_custom_return_value(self):
+        noop = make_noop(returns=42)
+        assert noop() == 42
+        assert noop(1, 2, 3) == 42
+
+    def test_async_noop(self):
+        noop = make_noop(asyncio=True)
+        assert asyncio.iscoroutinefunction(noop)
+
+    async def test_async_noop_execution(self):
+        noop = make_noop(asyncio=True, returns={"status": "success"})
+        result = await noop(1, 2, key="value")
+        assert result == {"status": "success"}
+
+
+class TestDoWith:
+    def test_do_with_contextmanager(self):
+        mock_enter = Mock()
+        mock_exit = Mock()
+        mock_func = Mock(return_value=42)
+
+        @contextlib.contextmanager
+        def test_context():
+            mock_enter()
+            try:
+                yield
+            finally:
+                mock_exit()
+
+        result = do_with(test_context(), mock_func, 1, 2, key="value")
+
+        assert result == 42
+        mock_enter.assert_called_once()
+        mock_exit.assert_called_once()
+        mock_func.assert_called_once_with(1, 2, key="value")
+
+    def test_exception_handling(self):
+        mock_enter = Mock()
+        mock_exit = Mock()
+        mock_func = Mock(side_effect=ValueError("Test error"))
+
+        @contextlib.contextmanager
+        def test_context():
+            mock_enter()
+            try:
+                yield
+            finally:
+                mock_exit()
+
+        with pytest.raises(ValueError, match="Test error"):
+            do_with(test_context(), mock_func)
+
+        mock_enter.assert_called_once()
+        mock_exit.assert_called_once()
+        mock_func.assert_called_once()
+
+
+class TestAsyncDoWith:
+    async def test_with_sync_context_and_func(self):
+        mock_enter = Mock()
+        mock_exit = Mock()
+        mock_func = Mock(return_value=42)
+
+        @contextlib.contextmanager
+        def test_context():
+            mock_enter()
+            try:
+                yield
+            finally:
+                mock_exit()
+
+        result = await asyncdo_with(
+            test_context(), mock_func, 1, 2, key="value"
+        )
+
+        assert result == 42
+        mock_enter.assert_called_once()
+        mock_exit.assert_called_once()
+        mock_func.assert_called_once_with(1, 2, key="value")
+
+    async def test_with_async_context_and_func(self):
+        mock_enter = AsyncMock()
+        mock_exit = AsyncMock()
+        mock_func = AsyncMock(return_value=42)
+
+        @contextlib.asynccontextmanager
+        async def test_context():
+            await mock_enter()
+            try:
+                yield
+            finally:
+                await mock_exit()
+
+        result = await asyncdo_with(
+            test_context(), mock_func, 1, 2, key="value"
+        )
+
+        assert result == 42
+        mock_enter.assert_called_once()
+        mock_exit.assert_called_once()
+        mock_func.assert_called_once_with(1, 2, key="value")
+
+    async def test_with_sync_context_and_async_func(self):
+        mock_enter = Mock()
+        mock_exit = Mock()
+        mock_func = AsyncMock(return_value=42)
+
+        @contextlib.contextmanager
+        def test_context():
+            mock_enter()
+            try:
+                yield
+            finally:
+                mock_exit()
+
+        result = await asyncdo_with(
+            test_context(), mock_func, 1, 2, key="value"
+        )
+
+        assert result == 42
+        mock_enter.assert_called_once()
+        mock_exit.assert_called_once()
+        mock_func.assert_called_once_with(1, 2, key="value")
+
+    async def test_exception_handling(self):
+        mock_enter = AsyncMock()
+        mock_exit = AsyncMock()
+        mock_func = AsyncMock(side_effect=ValueError("Test error"))
+
+        @contextlib.asynccontextmanager
+        async def test_context():
+            await mock_enter()
+            try:
+                yield
+            finally:
+                await mock_exit()
+
+        with pytest.raises(ValueError, match="Test error"):
+            await asyncdo_with(test_context(), mock_func)
+
+        mock_enter.assert_called_once()
+        mock_exit.assert_called_once()
+        mock_func.assert_called_once()
+
+
+class TestFrozenCoroutine:
+    async def test_single_execution(self):
+        mock_coro = AsyncMock(return_value=42)
+
+        async def test_coro():
+            return await mock_coro()
+
+        frozen = FrozenCoroutine(test_coro())
+        result1 = await frozen
+        result2 = await frozen
+
+        assert result1 == 42
+        assert result2 == 42
+        mock_coro.assert_called_once()
+
+    async def test_decorator(self):
+        mock_func = AsyncMock(return_value=42)
+
+        @FrozenCoroutine.decorate
+        async def test_func(x: Any, y: Any):
+            return await mock_func(x, y)
+
+        coro = test_func(1, 2)
+        assert isinstance(coro, FrozenCoroutine)
+
+        result1 = await coro
+        result2 = await coro
+
+        assert result1 == 42
+        assert result2 == 42
+        mock_func.assert_called_once_with(1, 2)
+        mock_func.assert_awaited_once()
+
+    async def test_multiple_instances(self):
+        call_count = 0
+
+        async def test_coro(x: float):
+            nonlocal call_count
+            call_count += 1
+            return x * 2
+
+        # Each instance should execute once
+        frozen1 = FrozenCoroutine(test_coro(10))
+        frozen2 = FrozenCoroutine(test_coro(20))
+
+        result1a = await frozen1
+        result2a = await frozen2
+        result1b = await frozen1
+        result2b = await frozen2
+
+        assert result1a == 20
+        assert result1b == 20
+        assert result2a == 40
+        assert result2b == 40
+        assert call_count == 2  # One for each unique instance
+
+
+class TestDatetimeFunctions:
+    def test_as_datetime(self):
+        d = date(2023, 5, 15)
+
+        # Without timezone
+        dt1 = as_datetime(d)
+        assert isinstance(dt1, datetime)
+        assert dt1.year == 2023
+        assert dt1.month == 5
+        assert dt1.day == 15
+        assert dt1.hour == 0
+        assert dt1.minute == 0
+        assert dt1.second == 0
+        assert dt1.tzinfo is None
+
+        # With timezone
+        tz = UTC
+        dt2 = as_datetime(d, tz)
+        assert dt2.tzinfo is tz
+
+    def test_join_into_datetime(self):
+        d = date(2023, 5, 15)
+        t = time(14, 30, 45, 123456)
+
+        # Without timezone
+        dt1 = join_into_datetime(d, t)
+        assert isinstance(dt1, datetime)
+        assert dt1.year == 2023
+        assert dt1.month == 5
+        assert dt1.day == 15
+        assert dt1.hour == 14
+        assert dt1.minute == 30
+        assert dt1.second == 45
+        assert dt1.microsecond == 123456
+        assert dt1.tzinfo is None
+
+        # With timezone
+        tz = UTC
+        dt2 = join_into_datetime(d, t, tz)
+        assert dt2.tzinfo is tz
+
+
+class TestAsAsyncIterable:
+    async def test_conversion(self):
+        original = [1, 2, 3, 4, 5]
+        async_iterable = as_async_iterable(original)
+
+        assert isinstance(async_iterable, AsyncIterable)
+
+        result = []
+        async for item in async_iterable:
+            result.append(item)
+
+        assert result == original
+
+
+class TestRaiseInsteadof:
+    def test_exception_replacement(self):
+        with pytest.raises(ValueError, match="Custom message"):
+            with raise_insteadof(KeyError, ValueError, "Custom message"):
+                raise KeyError("Original error")
+
+    def test_non_matching_exceptions_pass_through(self):
+        with pytest.raises(ValueError, match="Original error"):
+            with raise_insteadof(KeyError, RuntimeError, "Custom message"):
+                raise ValueError("Original error")
+
+    def test_no_exception(self):
+        # Should not raise or modify anything if no exception occurs
+        with raise_insteadof(KeyError, ValueError, "Custom message"):
+            x = 1 + 1
+        assert x == 2

@@ -25,7 +25,7 @@ complex_fragment = "section%20name%20with%20encoding"
 
 
 # Benchmark function
-def benchmark(func: Callable[[], Any], iterations: int = 100000):  # pyright: ignore[reportExplicitAny]
+def benchmark(func: Callable[[], Any], iterations: int = 100000):
     return timeit.timeit(func, number=iterations) / iterations
 
 

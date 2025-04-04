@@ -1,0 +1,13 @@
+# test
+pytest >= 8.3.5
+pytest-cov >= 6.0.0
+pytest-asyncio >= 0.26.0
+hypothesis >= 6.130.8
+
+# lint
+ruff >= 0.9.9
+basedpyright >= 1.28.1
+
+# to compare
+gyver >= 5.2.0
+context-handler (>=6.0.0,<7.0.0)

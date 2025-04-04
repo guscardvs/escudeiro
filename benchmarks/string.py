@@ -5,7 +5,8 @@ from collections.abc import Callable
 from typing import Any
 
 import gyver.misc.strings as gyver
-from escudeiro_pyrs import strings as escudeiro
+
+from escudeiro.escudeiro_pyrs import strings as escudeiro
 
 
 def generate_random_string(length: int = 50) -> str:
@@ -49,6 +50,6 @@ for func_name, args in test_cases.items():
 # Save results
 with open("benchmark_results.txt", "w") as f:
     for func, times in results.items():
-        f.write(f"{func}: {times}\n")
+        _ = f.write(f"{func}: {times}\n")
 
 print("Benchmarking complete. Results saved to benchmark_results.txt.")

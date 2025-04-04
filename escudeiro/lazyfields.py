@@ -1,8 +1,10 @@
 import contextlib
+import warnings
 from collections.abc import Callable, Coroutine
 from dataclasses import dataclass
-from typing import Any, Self, cast, final, override
+from typing import Any, Self, cast, final, overload, override
 
+from escudeiro.data.slots import slot
 from escudeiro.misc.functions import asyncdo_with, do_with
 
 
@@ -17,7 +19,7 @@ class lazy:
 
     @staticmethod
     def make_private(public_name: str) -> str:
-        return f"_lazyfield_{public_name}"
+        return f"_lazyfield_{public_name}_"
 
     def _instance_marked(self, instance: Any) -> bool:
         return hasattr(instance, self.private_name)
@@ -64,7 +66,7 @@ class AlazyContainer[T]:
 
 
 @final
-class lazyfield[SelfT, T](lazy):
+class LazyField[SelfT, T](lazy):
     @override
     def __init__(
         self,
@@ -78,16 +80,38 @@ class lazyfield[SelfT, T](lazy):
         self.lock_factory = lock_factory
         self._internal_lock = lock_factory()
 
-    def __get__(self, instance: SelfT | None, owner: SelfT) -> Self | T:
+    @overload
+    def __get__(self, instance: SelfT, owner: type[SelfT]) -> T: ...
+
+    @overload
+    def __get__(self, instance: None, owner: type[SelfT]) -> Self: ...
+
+    def __get__(self, instance: SelfT | None, owner: type[SelfT]) -> Self | T:
         if instance is None:
             return self
 
         return self._do_get(instance)
 
     def _do_get(self, instance: SelfT) -> T:
-        if self._instance_marked(instance):
-            return self._get_nosync(instance)
-        with self._internal_lock:
+        is_marked_instance = is_marked(instance)
+        lock = (
+            self._internal_lock if not is_marked_instance else get_ctx(instance)
+        )
+
+        if (
+            lock is self._internal_lock
+            and not isinstance(lock, contextlib.nullcontext)
+            and not is_marked_instance
+        ):
+            warnings.warn(
+                "Trying to use synchronization without marking class"
+                + f" might lock all instances and methods. {lock}",
+                UserWarning,
+                stacklevel=3,
+            )
+        with lock:
+            if self._instance_marked(instance):
+                return self._get_nosync(instance)
             val = self._setval(instance, _UNSET)
             return cast(
                 T, val.acquire()
@@ -117,8 +141,24 @@ class lazyfield[SelfT, T](lazy):
         return container
 
     def __set__(self, instance: SelfT, value: T):
+        is_marked_instance = is_marked(instance)
+        lock = (
+            self._internal_lock if not is_marked_instance else get_ctx(instance)
+        )
+
+        if (
+            lock is self._internal_lock
+            and not isinstance(lock, contextlib.nullcontext)
+            and not is_marked_instance
+        ):
+            warnings.warn(
+                "Trying to use synchronization without marking class"
+                + f" might lock all instances and methods. {lock}",
+                UserWarning,
+                stacklevel=2,
+            )
         if not self._instance_marked(instance):
-            _ = do_with(self._internal_lock, self._setval, instance, value)
+            _ = do_with(lock, self._setval, instance, value)
             return
 
         container = object.__getattribute__(instance, self.private_name)
@@ -132,7 +172,7 @@ class lazyfield[SelfT, T](lazy):
 
 
 @final
-class asynclazyfield[SelfT, T](lazy):
+class AsyncLazyField[SelfT, T](lazy):
     @override
     def __init__(
         self,
@@ -146,19 +186,42 @@ class asynclazyfield[SelfT, T](lazy):
         self.lock_factory = lock_factory
         self._internal_lock = lock_factory()
 
+    @overload
     def __get__(
-        self, instance: SelfT | None, owner: SelfT
+        self, instance: SelfT, owner: type[SelfT]
+    ) -> Callable[[], Coroutine[Any, Any, T]]: ...
+
+    @overload
+    def __get__(self, instance: None, owner: type[SelfT]) -> Self: ...
+
+    def __get__(
+        self, instance: SelfT | None, owner: type[SelfT]
     ) -> Self | Callable[[], Coroutine[Any, Any, T]]:
         if instance is None:
             return self
-
         return self._do_get(instance)
 
     def _do_get(self, instance: SelfT) -> Callable[[], Coroutine[Any, Any, T]]:
+        is_marked_instance = is_marked(instance)
+        lock = (
+            self._internal_lock if not is_marked_instance else get_ctx(instance)
+        )
+        if (
+            lock is self._internal_lock
+            and not isinstance(lock, contextlib.nullcontext)
+            and not is_marked_instance
+        ):
+            warnings.warn(
+                "Trying to use synchronization without marking class"
+                + f" might lock all instances and methods. {lock}",
+                UserWarning,
+                stacklevel=3,
+            )
+
         async def _getter():
-            if self._instance_marked(instance):
-                return await self._get_nosync(instance)
-            async with self._internal_lock:
+            async with lock:
+                if self._instance_marked(instance):
+                    return await self._get_nosync(instance)
                 val = await self._setval(instance, _UNSET)
                 return cast(
                     T, await val.acquire()
@@ -211,3 +274,109 @@ class asynclazyfield[SelfT, T](lazy):
             await container.put(cast(T, to_reset))
         else:
             await container.delete()
+
+
+def mark_class(
+    ctx_factory: Callable[[], contextlib.AbstractAsyncContextManager]
+    | Callable[[], contextlib.AbstractContextManager],
+):
+    def _wrap[T](cls: type[T]) -> type[T]:
+        original_init = cls.__init__
+
+        def _init_(self: T, *args: Any, **kwargs: Any):
+            original_init(self, *args, **kwargs)
+            object.__setattr__(self, "_lazyfield_ctx_", ctx_factory())
+
+        type.__setattr__(cls, "__init__", _init_)
+        type.__setattr__(cls, "_lazyfield_marked_", True)
+        return cls
+
+    return _wrap
+
+
+def is_marked(val: Any) -> bool:
+    return getattr(val, "_lazyfield_marked_", False)
+
+
+def get_ctx(val: Any):
+    return object.__getattribute__(val, "_lazyfield_ctx_")
+
+
+@overload
+def lazyfield[SelfT, T](
+    func: Callable[[SelfT], T], /
+) -> LazyField[SelfT, T]: ...
+
+
+@overload
+def lazyfield[SelfT, T](
+    func: None = None,
+    /,
+    lock_factory: Callable[
+        [], contextlib.AbstractContextManager
+    ] = contextlib.nullcontext,
+) -> Callable[[Callable[[SelfT], T]], LazyField[SelfT, T]]: ...
+
+
+def lazyfield[SelfT, T](
+    func: Callable[[SelfT], T] | None = None,
+    /,
+    lock_factory: Callable[
+        [], contextlib.AbstractContextManager
+    ] = contextlib.nullcontext,
+) -> (
+    LazyField[SelfT, T] | Callable[[Callable[[SelfT], T]], LazyField[SelfT, T]]
+):
+    def _wrap(func: Callable[[SelfT], T]) -> LazyField[SelfT, T]:
+        return slot.make("_lazyfield_ctx_", value=LazyField(func, lock_factory))
+
+    return _wrap if func is None else _wrap(func)
+
+
+@overload
+def asynclazyfield[SelfT, T](
+    func: Callable[[SelfT], Coroutine[Any, Any, T]], /
+) -> AsyncLazyField[SelfT, T]: ...
+
+
+@overload
+def asynclazyfield[SelfT, T](
+    func: None = None,
+    /,
+    lock_factory: Callable[
+        [], contextlib.AbstractAsyncContextManager
+    ] = contextlib.nullcontext,
+) -> Callable[
+    [Callable[[SelfT], Coroutine[Any, Any, T]]], AsyncLazyField[SelfT, T]
+]: ...
+
+
+def asynclazyfield[SelfT, T](
+    func: Callable[[SelfT], Coroutine[Any, Any, T]] | None = None,
+    /,
+    lock_factory: Callable[
+        [], contextlib.AbstractAsyncContextManager
+    ] = contextlib.nullcontext,
+) -> (
+    AsyncLazyField[SelfT, T]
+    | Callable[
+        [Callable[[SelfT], Coroutine[Any, Any, T]]], AsyncLazyField[SelfT, T]
+    ]
+):
+    def _wrap(
+        func: Callable[[SelfT], Coroutine[Any, Any, T]],
+    ) -> AsyncLazyField[SelfT, T]:
+        return slot.make(
+            "_lazyfield_ctx_", value=AsyncLazyField(func, lock_factory)
+        )
+
+    return _wrap if func is None else _wrap(func)
+
+
+def is_initialized(instance: Any, attr: str) -> bool:
+    lazyf = getattr(type(instance), attr)
+    if not isinstance(lazyf, lazy):
+        raise TypeError(
+            f"Attribute {type(instance).__name__}.{attr} is not a lazyfield"
+        )
+    return hasattr(instance, lazyf.private_name)
