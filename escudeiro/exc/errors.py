@@ -61,3 +61,15 @@ class ErrorGroup(ExceptionGroup):
 
 class FailedFileOperation(SquireError):
     """Raised when an error occurs during an interaction with a file."""
+
+
+class InvalidPath(SquireError, ValueError):
+    """Raised when an invalid file or directory path is encountered."""
+
+
+class SyncError(SquireError, ValueError):
+    """Raised when a synchronization fails, such as acquiring a lock."""
+
+
+class DuplicateFile(SquireError, ValueError):
+    """Raised when trying to write a file that already exists"""

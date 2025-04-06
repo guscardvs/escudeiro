@@ -1,7 +1,8 @@
+import enum
 from collections.abc import Collection, Mapping
 from datetime import datetime, tzinfo
 from pathlib import Path
-from typing import Any, Self
+from typing import Any, ClassVar, Literal, Self
 
 class url:
     """A collection of URL parsing and manipulation utilities."""
@@ -348,10 +349,13 @@ class filetree:
         """
         ...
 
-    class InvalidValueError(Exception):
-        """Exception raised when an invalid operation is performed on a value."""
+    class ErrorCodes(enum.Enum):
+        """Mapping of possible error codes."""
 
-        ...
+        InvalidParam: ClassVar[Literal[1]]
+        UnableToAcquireLock: ClassVar[Literal[2]]
+        InvalidPath: ClassVar[Literal[3]]
+        DuplicateFile: ClassVar[Literal[4]]
 
     class FsNode:
         """
@@ -464,6 +468,30 @@ class filetree:
 
             Raises:
                 ValueError: If this node is a file, or if the lock cannot be acquired
+            """
+            ...
+
+        def write_content(self, content: bytes) -> None:
+            """
+            Write content to this node.
+
+            Args:
+                content: the content to be written in bytes
+
+            Raises:
+                ValueError: if this node is a directory, or if the lock cannot be acquired.
+            """
+            ...
+
+        def append_content(self, content: bytes) -> None:
+            """
+            Append content to this node.
+
+            Args:
+                content: the content to be appended in bytes
+
+            Raises:
+                ValueError: if this node is a directory, or if the lock cannot be acquired.
             """
             ...
 

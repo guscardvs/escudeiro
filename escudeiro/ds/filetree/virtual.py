@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+from functools import partial
 from typing import Self
 
 from escudeiro.data import data
+from escudeiro.ds.filetree.helpers import resolve_error
 from escudeiro.escudeiro_pyrs import filetree
-from escudeiro.exc.errors import FailedFileOperation
+from escudeiro.exc.errors import FailedFileOperation, InvalidPath
 from escudeiro.lazyfields import lazyfield
 
 
@@ -53,3 +55,96 @@ class VirtualFileTree:
         else:
             parent_node = self._internal.root
         parent_node.add_child(vt.root)
+
+    def create_file(
+        self,
+        filename: str,
+        *path: str,
+        content: bytes = b"",
+        append: bool = False,
+    ) -> filetree.FsNode:
+        file_maker = partial(
+            self._internal.create_file,
+            filename,
+            content,
+            *path,
+        )
+        try:
+            parent = self._internal.get_node(*path)
+        except ValueError:
+            return file_maker()
+        else:
+            node = parent.get_shallow(filename)
+            if not node:
+                return file_maker()
+            elif node.content is None:
+                raise FailedFileOperation(
+                    f"Trying to create file {node.name} where there is a folder."
+                )
+            else:
+                writer = node.append_content if append else node.write_content
+                writer(content)
+                return node
+
+    def create_text_file(
+        self,
+        filename: str,
+        *path: str,
+        content: str = "",
+        encoding: str = "utf-8",
+        append: bool = False,
+    ) -> filetree.FsNode:
+        return self.create_file(
+            filename,
+            *path,
+            content=content.encode(encoding),
+            append=append,
+        )
+
+    def create_py_file(
+        self,
+        filename: str,
+        *path: str,
+        private: bool = False,
+        dunder: bool = False,
+        content: str = "",
+        append: bool = False,
+    ) -> filetree.FsNode:
+        return self.create_text_file(
+            filetree.python_filename(
+                filename,
+                dunder=dunder,
+                private=private,
+            ),
+            *path,
+            content=content,
+            append=append,
+        )
+
+    def init_file(
+        self,
+        *path: str,
+        content: str = "",
+        append: bool = False,
+    ) -> filetree.FsNode:
+        return self.create_text_file(
+            filetree.init_file(),
+            *path,
+            content=content,
+            append=append,
+        )
+
+    def create_dir(self, dirname: str, *path: str) -> filetree.FsNode:
+        return self._internal.create_dir(dirname, *path)
+
+    def get_path(self, pathname: str, *path: str) -> filetree.FsNode:
+        try:
+            parent = self._internal.get_node(*path)
+        except ValueError as e:
+            raise resolve_error(e)
+        else:
+            file = parent.get_shallow(pathname)
+            if file is None:
+                raise InvalidPath("path not found")
+            else:
+                return file

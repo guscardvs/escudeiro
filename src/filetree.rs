@@ -1,19 +1,28 @@
 use pyo3::pymodule;
+
 #[pymodule]
 pub mod filetree {
     use core::fmt;
-    use pyo3::{
-        Bound, PyResult, exceptions::PyValueError, pyclass, pyfunction, pymethods, types::PyType,
-    };
+    use pyo3::{PyResult, exceptions::PyValueError, pyclass, pyfunction, pymethods};
     use std::sync::{Arc, Mutex};
+
+    #[pyclass(eq, eq_int)]
+    #[derive(PartialEq)]
+    enum ErrorCodes {
+        InvalidParam = 1,
+        UnableToAcquireLock,
+        InvalidPath,
+        DuplicateFile,
+    }
 
     #[pyfunction]
     #[pyo3(signature = (filename, private = false, dunder = false))]
     pub fn python_filename(filename: String, private: bool, dunder: bool) -> PyResult<String> {
         if private && dunder {
-            Err(PyValueError::new_err(
+            Err(PyValueError::new_err((
                 "Cannot have a file that is both private and dunder.",
-            ))
+                ErrorCodes::InvalidParam,
+            )))
         } else if private {
             Ok(format!("_{}.py", filename))
         } else if dunder {
@@ -80,6 +89,13 @@ pub mod filetree {
                 })
                 .cloned()
         }
+
+        fn append_content(&mut self, content: &mut Vec<u8>) {
+            match &mut self.content {
+                Some(curcontent) => curcontent.append(content),
+                None => self.content = Some(content.to_vec()),
+            }
+        }
     }
 
     // Python-exposed node wrapper
@@ -104,7 +120,10 @@ pub mod filetree {
         pub fn name(&self) -> PyResult<String> {
             match self.inner.lock() {
                 Ok(node) => Ok(node.name.clone()),
-                Err(_) => Err(PyValueError::new_err("Failed to acquire lock on node")),
+                Err(_) => Err(PyValueError::new_err((
+                    "Failed to acquire lock on node",
+                    ErrorCodes::UnableToAcquireLock,
+                ))),
             }
         }
 
@@ -112,7 +131,10 @@ pub mod filetree {
         pub fn content(&self) -> PyResult<Option<Vec<u8>>> {
             match self.inner.lock() {
                 Ok(node) => Ok(node.content.clone()),
-                Err(_) => Err(PyValueError::new_err("Failed to acquire lock on node")),
+                Err(_) => Err(PyValueError::new_err((
+                    "Failed to acquire lock on node",
+                    ErrorCodes::UnableToAcquireLock,
+                ))),
             }
         }
 
@@ -129,21 +151,30 @@ pub mod filetree {
                         .collect();
                     Ok(children)
                 }
-                Err(_) => Err(PyValueError::new_err("Failed to acquire lock on node")),
+                Err(_) => Err(PyValueError::new_err((
+                    "Failed to acquire lock on node",
+                    ErrorCodes::UnableToAcquireLock,
+                ))),
             }
         }
 
         pub fn is_file(&self) -> PyResult<bool> {
             match self.inner.lock() {
                 Ok(node) => Ok(node.is_file()),
-                Err(_) => Err(PyValueError::new_err("Failed to acquire lock on node")),
+                Err(_) => Err(PyValueError::new_err((
+                    "Failed to acquire lock on node",
+                    ErrorCodes::UnableToAcquireLock,
+                ))),
             }
         }
 
         pub fn contains_shallow(&self, name: String) -> PyResult<bool> {
             match self.inner.lock() {
                 Ok(node) => Ok(node.contains_shallow(&name)),
-                Err(_) => Err(PyValueError::new_err("Failed to acquire lock on node")),
+                Err(_) => Err(PyValueError::new_err((
+                    "Failed to acquire lock on node",
+                    ErrorCodes::UnableToAcquireLock,
+                ))),
             }
         }
 
@@ -155,7 +186,10 @@ pub mod filetree {
                         .map(|node_ref| FsNode { inner: node_ref });
                     Ok(child)
                 }
-                Err(_) => Err(PyValueError::new_err("Failed to acquire lock on node")),
+                Err(_) => Err(PyValueError::new_err((
+                    "Failed to acquire lock on node",
+                    ErrorCodes::UnableToAcquireLock,
+                ))),
             }
         }
 
@@ -163,13 +197,64 @@ pub mod filetree {
             match self.inner.lock() {
                 Ok(mut self_node) => {
                     if self_node.is_file() {
-                        Err(PyValueError::new_err("Cannot add children to a file"))
+                        Err(PyValueError::new_err((
+                            "Cannot add children to a file",
+                            ErrorCodes::InvalidPath,
+                        )))
                     } else {
                         self_node.children.push(node.inner.clone());
                         Ok(())
                     }
                 }
-                Err(_) => Err(PyValueError::new_err("Failed to acquire lock on node")),
+                Err(_) => Err(PyValueError::new_err((
+                    "Failed to acquire lock on node",
+                    ErrorCodes::UnableToAcquireLock,
+                ))),
+            }
+        }
+        fn write_content(&self, content: Vec<u8>) -> PyResult<()> {
+            match self.inner.lock() {
+                Ok(mut self_node) => {
+                    if self_node.children.len() > 0 {
+                        return Err(PyValueError::new_err((
+                            format!(
+                                "Trying to write into file {} where there is a folder",
+                                self_node.name
+                            ),
+                            ErrorCodes::InvalidPath,
+                        )));
+                    } else {
+                        self_node.content = Some(content);
+                        Ok(())
+                    }
+                }
+                Err(_) => Err(PyValueError::new_err((
+                    "Failed to acquire lock on node",
+                    ErrorCodes::UnableToAcquireLock,
+                ))),
+            }
+        }
+
+        fn append_content(&self, other: Vec<u8>) -> PyResult<()> {
+            match self.inner.lock() {
+                Ok(mut self_node) => {
+                    if self_node.children.len() > 0 {
+                        return Err(PyValueError::new_err((
+                            format!(
+                                "Trying to write into file {} where there is a folder",
+                                self_node.name
+                            ),
+                            ErrorCodes::InvalidPath,
+                        )));
+                    } else {
+                        self_node.append_content(&mut other.clone());
+                        Ok(())
+                    }
+                }
+                Err(_) => Err(PyValueError::new_err((
+                    "Failed to acquire lock on node",
+                    ErrorCodes::UnableToAcquireLock,
+                ))),
             }
         }
     }
@@ -204,9 +289,9 @@ pub mod filetree {
             // Check if directory already exists
             if let Some(existing) = target.get_shallow(name.clone())? {
                 if existing.is_file()? {
-                    return Err(PyValueError::new_err(format!(
-                        "Directory name conflicts with file {}",
-                        name
+                    return Err(PyValueError::new_err((
+                        format!("Directory name conflicts with file {}", name),
+                        ErrorCodes::InvalidPath,
                     )));
                 }
                 return Ok(existing);
@@ -230,9 +315,9 @@ pub mod filetree {
 
             // Check if file already exists
             if target.contains_shallow(name.clone())? {
-                return Err(PyValueError::new_err(format!(
-                    "File name '{}' already exists in this directory",
-                    name
+                return Err(PyValueError::new_err((
+                    format!("File name '{}' already exists in this directory", name),
+                    ErrorCodes::DuplicateFile,
                 )));
             }
 
@@ -255,9 +340,9 @@ pub mod filetree {
             for component in path {
                 if let Some(child) = current.get_shallow(component.clone())? {
                     if child.is_file()? {
-                        return Err(PyValueError::new_err(format!(
-                            "Path component '{}' is a file, not a directory",
-                            component
+                        return Err(PyValueError::new_err((
+                            format!("Path component '{}' is a file, not a directory", component),
+                            ErrorCodes::InvalidPath,
                         )));
                     }
                     current = child;
