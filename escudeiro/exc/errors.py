@@ -57,3 +57,7 @@ class InvalidParamType(SquireError, TypeError):
 
 class ErrorGroup(ExceptionGroup):
     """Used to group SquireError instances"""
+
+
+class FailedFileOperation(SquireError):
+    """Raised when an error occurs during an interaction with a file."""

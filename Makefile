@@ -1,8 +1,11 @@
-.PHONY: build test
+.PHONY: build-dev test
 
-build:
-	@poetry install
+venv_bin := "$(shell pwd)/.venv/bin"
 
-test:
-	@poetry install
-	@poetry run pytest
+
+build-dev:
+	@maturin develop -Epydantic,msgspec
+	@${venv_bin}/pip install -r dev-requirements.txt
+
+test: build-dev
+	@${venv_bin}/pytest

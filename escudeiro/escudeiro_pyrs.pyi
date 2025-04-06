@@ -308,3 +308,251 @@ class cronjob:
 
         def matches(self, value: datetime) -> bool:
             """Check if the given datetime matches the cron schedule."""
+
+class filetree:
+    """
+    Python interface for file tree manipulation implemented in Rust.
+
+    This module provides utilities for creating and manipulating file and directory
+    structures in memory. It includes functions for generating Python filenames
+    and classes for representing filesystem nodes and trees.
+    """
+
+    @staticmethod
+    def python_filename(
+        filename: str, private: bool = False, dunder: bool = False
+    ) -> str:
+        """
+        Format a string as a Python filename with appropriate prefixes and extension.
+
+        Args:
+            filename: Base name of the file without extension
+            private: If True, prepends a single underscore to the filename
+            dunder: If True, wraps the filename with double underscores
+
+        Returns:
+            Formatted Python filename with .py extension
+
+        Raises:
+            ValueError: If both private and dunder are True
+        """
+        ...
+
+    @staticmethod
+    def init_file() -> str:
+        """
+        Generate a standard Python package __init__.py filename.
+
+        Returns:
+            The string "__init__.py"
+        """
+        ...
+
+    class InvalidValueError(Exception):
+        """Exception raised when an invalid operation is performed on a value."""
+
+        ...
+
+    class FsNode:
+        """
+        Represents a node in a file system tree.
+
+        A node can be either a file (with content) or a directory (containing other nodes).
+        Thread-safe operations are ensured through internal locking mechanisms.
+        """
+
+        def __init__(self, name: str, content: bytes | None = None) -> None:
+            """
+            Initialize a new filesystem node.
+
+            Args:
+                name: Name of the node
+                content: If provided, the node is treated as a file with this content;
+                        otherwise, it's treated as a directory
+            """
+            ...
+
+        @property
+        def name(self) -> str:
+            """
+            Get the name of this node.
+
+            Returns:
+                The name of the node
+
+            Raises:
+                ValueError: If the internal lock cannot be acquired
+            """
+            ...
+
+        @property
+        def content(self) -> bytes | None:
+            """
+            Get the content of this node if it's a file.
+
+            Returns:
+                The content as bytes if node is a file, None if it's a directory
+
+            Raises:
+                ValueError: If the internal lock cannot be acquired
+            """
+            ...
+
+        @property
+        def children(self) -> list[filetree.FsNode]:
+            """
+            Get all child nodes if this node is a directory.
+
+            Returns:
+                List of child nodes
+
+            Raises:
+                ValueError: If the internal lock cannot be acquired
+            """
+            ...
+
+        def is_file(self) -> bool:
+            """
+            Check if this node represents a file.
+
+            Returns:
+                True if the node is a file, False if it's a directory
+
+            Raises:
+                ValueError: If the internal lock cannot be acquired
+            """
+            ...
+
+        def contains_shallow(self, name: str) -> bool:
+            """
+            Check if this directory contains a child with the given name.
+            Only checks immediate children, not descendents.
+
+            Args:
+                name: Name of the child node to look for
+
+            Returns:
+                True if a child with the given name exists, False otherwise
+
+            Raises:
+                ValueError: If the internal lock cannot be acquired
+            """
+            ...
+
+        def get_shallow(self, name: str) -> filetree.FsNode | None:
+            """
+            Get a child node by name if it exists.
+            Only checks immediate children, not descendents.
+
+            Args:
+                name: Name of the child node to retrieve
+
+            Returns:
+                The child node if found, None otherwise
+
+            Raises:
+                ValueError: If the internal lock cannot be acquired
+            """
+            ...
+
+        def add_child(self, node: filetree.FsNode) -> None:
+            """
+            Add a child node to this directory.
+
+            Args:
+                node: The node to add as a child
+
+            Raises:
+                ValueError: If this node is a file, or if the lock cannot be acquired
+            """
+            ...
+
+    class FsTree:
+        """
+        Represents a file system tree structure.
+
+        Provides methods for creating and navigating directories and files within
+        the tree structure.
+        """
+
+        def __init__(self, basename: str) -> None:
+            """
+            Initialize a new file system tree with a root directory.
+
+            Args:
+                basename: Name of the root directory
+            """
+            ...
+
+        @staticmethod
+        def from_node(root: filetree.FsNode) -> filetree.FsTree:
+            """Initialize a new file system tree with a root directory as the node.
+
+            Args:
+                root: Root node of the file tree.
+            """
+
+        @property
+        def root(self) -> filetree.FsNode:
+            """
+            Get the root node of this tree.
+
+            Returns:
+                The root node
+            """
+            ...
+
+        def create_dir(self, name: str, *path: str) -> filetree.FsNode:
+            """
+            Create a new directory at the specified path.
+
+            If the path doesn't exist, intermediate directories will be created.
+            If the directory already exists, it will be returned.
+
+            Args:
+                name: Name of the directory to create
+                *path: Path components leading to the parent directory
+
+            Returns:
+                The newly created or existing directory node
+
+            Raises:
+                ValueError: If a file with the same name exists at the specified location
+            """
+            ...
+
+        def create_file(
+            self, name: str, content: bytes, *path: str
+        ) -> filetree.FsNode:
+            """
+            Create a new file with the specified content at the given path.
+
+            If the path doesn't exist, intermediate directories will be created.
+
+            Args:
+                name: Name of the file to create
+                content: Content of the file as bytes
+                *path: Path components leading to the parent directory
+
+            Returns:
+                The newly created file node
+
+            Raises:
+                ValueError: If a node with the same name already exists at the specified location
+            """
+            ...
+
+        def get_node(self, *path: str) -> filetree.FsNode:
+            """
+            Get a node at the specified path, creating directories as needed.
+
+            Args:
+                *path: Path components to navigate
+
+            Returns:
+                The node at the specified path
+
+            Raises:
+                ValueError: If a path component is a file but not the last component
+            """
+            ...
