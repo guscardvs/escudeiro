@@ -17,7 +17,10 @@ def resolve_error(instance: ValueError) -> Exception:
         err.__cause__ = instance
         return err
     else:
-        msg, errkind, *_ = instance.args
+        if len(instance.args) != 2:
+            return instance
+
+        msg, errkind = instance.args
         if TYPE_CHECKING:
             errkind: filetree.ErrorCodes
 
@@ -31,8 +34,7 @@ def resolve_error(instance: ValueError) -> Exception:
             case filetree.ErrorCodes.DuplicateFile:
                 err = DuplicateFile(msg)
             case _:
-                err = instance
+                return instance
 
-        if err is not instance:
-            err.__cause__ = instance
+        err.__cause__ = instance
         return err

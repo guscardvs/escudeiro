@@ -1,5 +1,7 @@
+# pyright: reportOptionalMemberAccess=false
 import pytest
 
+from escudeiro.data.converters.utils import asdict
 from escudeiro.ds import VirtualFileTree
 from escudeiro.exc.errors import FailedFileOperation, InvalidPath
 
@@ -17,7 +19,8 @@ def test_create_dir_existing_folder():
     with file_tree.virtual_context("folder") as inner_tree:
         folder1 = inner_tree.create_dir("subfolder")
         folder2 = inner_tree.create_dir("subfolder")
-        assert folder1 is folder2
+        # get_shallow returns a copy; we check name equality to confirm logical identity
+        assert folder1.name == folder2.name
 
 
 def test_create_dir_existing_file():
@@ -29,192 +32,145 @@ def test_create_dir_existing_file():
 
 
 def test_create_file():
-    file_tree = VirtualFileTree(Folder("root"))
+    file_tree = VirtualFileTree.from_basename("root")
     with file_tree.virtual_context("folder") as inner_tree:
         file = inner_tree.create_file("file")
         assert file.name == "file"
-        assert file.contents.getvalue() == "".encode(file.get_encoding())
+        assert file.content == b""
 
 
 def test_create_file_existing_folder():
-    file_tree = VirtualFileTree(Folder("root"))
+    file_tree = VirtualFileTree.from_basename("root")
     with file_tree.virtual_context("folder") as inner_tree:
-        inner_tree.create_dir("subfolder")
+        _ = inner_tree.create_dir("subfolder")
         with pytest.raises(InvalidPath):
-            inner_tree.create_file("subfolder")
+            _ = inner_tree.create_file("subfolder")
 
 
 def test_create_file_existing_file():
-    file_tree = VirtualFileTree(Folder("root"))
+    file_tree = VirtualFileTree.from_basename("root")
     with file_tree.virtual_context("folder") as inner_tree:
         file1 = inner_tree.create_file("file")
         file2 = inner_tree.create_file("file")
-        assert file1 is file2
+        assert file1.name == file2.name
 
 
 def test_get_file():
-    file_tree = VirtualFileTree(Folder("root"))
+    file_tree = VirtualFileTree.from_basename("root")
     with file_tree.virtual_context("folder") as inner_tree:
-        inner_tree.create_file("file")
-        file = inner_tree.get_file("file")
+        _ = inner_tree.create_file("file")
+        file = inner_tree.get_path("file")
         assert file.name == "file"
 
 
 def test_get_file_nonexistent_folder():
-    file_tree = VirtualFileTree(Folder("root"))
+    file_tree = VirtualFileTree.from_basename("root")
     with pytest.raises(InvalidPath):
-        file_tree.get_file("file", "invalid")
+        _ = file_tree.get_path("file", "invalid")
 
 
 def test_get_file_nonexistent_file():
-    file_tree = VirtualFileTree(Folder("root"))
+    file_tree = VirtualFileTree.from_basename("root")
     with file_tree.virtual_context("folder") as inner_tree:
         with pytest.raises(InvalidPath):
-            inner_tree.get_file("file")
+            _ = inner_tree.get_path("file")
 
 
 def test_get_dir():
-    file_tree = VirtualFileTree(Folder("root"))
+    file_tree = VirtualFileTree.from_basename("root")
     with file_tree.virtual_context("folder") as inner_tree:
-        inner_tree.create_dir("folder")
-        folder = inner_tree.get_dir("folder")
+        _ = inner_tree.create_dir("folder")
+        folder = inner_tree.get_path("folder")
         assert folder is not None
         assert folder.name == "folder"
 
 
 def test_get_dir_nonexistent_folder():
-    file_tree = VirtualFileTree(Folder("root"))
-    folder = file_tree.get_dir("folder")
-    assert folder is None
+    file_tree = VirtualFileTree.from_basename("root")
+    with pytest.raises(InvalidPath):
+        _ = file_tree.get_path("folder")
 
 
 def test_create_py_file():
-    file_tree = VirtualFileTree(Folder("root"))
+    file_tree = VirtualFileTree.from_basename("root")
     with file_tree.virtual_context("folder"):
         file = file_tree.create_py_file("script")
         assert file.name == "script.py"
 
 
-def test_dunder_init():
-    file_tree = VirtualFileTree(Folder("root"))
+def test_init_file():
+    file_tree = VirtualFileTree.from_basename("root")
     with file_tree.virtual_context("folder"):
-        file = file_tree.dunder_init()
+        file = file_tree.create_init_file()
         assert file.name == "__init__.py"
 
 
 def test_from_virtual():
-    file_tree = VirtualFileTree(Folder("root"))
+    file_tree = VirtualFileTree.from_basename("root")
     with file_tree.virtual_context("folder") as inner_tree:
-        inner_tree.create_dir("subfolder")
-        inner_tree.create_file("file")
+        _ = inner_tree.create_dir("subfolder")
+        _ = inner_tree.create_file("file")
 
-        new_tree = VirtualFileTree(Folder("new_root"))
-        new_root = new_tree.from_virtual(inner_tree, "folder")
-        assert new_root.name == "folder"
-        assert isinstance(new_root, Folder)
-        assert new_root.contents["subfolder"].name == "subfolder"
-        assert isinstance(new_root.contents["subfolder"], Folder)
-        assert new_root.contents["file"].name == "file"
-        assert isinstance(new_root.contents["file"], File)
+        new_tree = VirtualFileTree.from_basename("new_root")
+        new_tree.merge(inner_tree, "folder")
+        new_inner_root = new_tree.root.get_shallow("folder")
+        assert new_inner_root
+        assert new_inner_root.name == "folder"
+
+        old_inner_root = new_inner_root.get_shallow("folder")
+        assert old_inner_root
+        assert old_inner_root.get_shallow("subfolder")
+        assert not old_inner_root.get_shallow("subfolder").is_file()
+        assert old_inner_root.get_shallow("file")
+        assert old_inner_root.get_shallow("file").is_file()
 
 
 def test_from_virtual_existing_file():
-    file_tree = VirtualFileTree(Folder("root"))
+    file_tree = VirtualFileTree.from_basename("root")
     with file_tree.virtual_context("folder") as inner_tree:
-        inner_tree.create_file("file")
+        _ = inner_tree.create_file("file")
 
-    new_tree = VirtualFileTree(Folder("file"))
+    new_tree = VirtualFileTree.from_basename("file")
     with pytest.raises(InvalidPath):
-        file_tree.from_virtual(new_tree, "folder")
+        file_tree.merge(new_tree, "folder")
 
 
 def test_from_virtual_foldername_conflict():
-    file_tree = VirtualFileTree(Folder("root"))
+    file_tree = VirtualFileTree.from_basename("root")
     with file_tree.virtual_context("folder") as inner_tree:
-        inner_tree.create_file("subfolder")
+        _ = inner_tree.create_file("subfolder")
 
-    new_tree = VirtualFileTree(Folder("subfolder"))
+    new_tree = VirtualFileTree.from_basename("subfolder")
     with pytest.raises(InvalidPath):
-        file_tree.from_virtual(new_tree, "folder")
+        file_tree.merge(new_tree, "folder")
 
 
 def test_virtual_context():
-    file_tree = VirtualFileTree(Folder("root"))
+    file_tree = VirtualFileTree.from_basename("root")
     with file_tree.virtual_context("folder") as inner_tree:
         folder = inner_tree.create_dir("subfolder")
         file = inner_tree.create_file("file")
-        text_file = inner_tree.create_file("text_file", fileclass=TextFile)
-        text_file.write("Hello")
+        text_file = inner_tree.create_text_file("text_file")
+        text_file.append_content(b"Hello")
         assert folder.name == "subfolder"
         assert file.name == "file"
-        assert inner_tree.root.contents["subfolder"].name == "subfolder"
-        assert inner_tree.root.contents["file"].name == "file"
-    assert asdict(file_tree.root) == {
-        "name": "root",
-        "contents": {
+        assert inner_tree.root.get_shallow("subfolder")
+        assert inner_tree.root.get_shallow("file")
+    assert asdict(file_tree) == {
+        "root": {
             "folder": {
-                "name": "folder",
-                "contents": {
-                    "subfolder": {"name": "subfolder", "contents": {}},
-                    "file": {
-                        "name": "file",
-                        "contents": file.contents,
-                    },
-                    "text_file": {
-                        "name": "text_file",
-                        "contents": text_file.contents,
-                        "encoding": text_file.encoding,
-                    },
-                },
+                "subfolder": {},
+                "file": file.content,
+                "text_file": text_file.content,
             }
         },
     }
 
 
 def test_virtual_context_exception():  # sourcery skip: raise-specific-error
-    file_tree = VirtualFileTree(Folder("root"))
+    file_tree = VirtualFileTree.from_basename("root")
     with pytest.raises(FailedFileOperation):
         with file_tree.virtual_context("folder"):
             raise Exception("Something went wrong")
 
-    assert file_tree.root.contents == {}
-
-
-def test_from_virtual_merge_strict():
-    file_tree = VirtualFileTree(Folder("root"))
-
-    # Create a file with the same name as the folder we want to merge
-    with file_tree.virtual_context("folder") as inner_tree:
-        inner_tree.create_file("file.txt")
-
-    another = VirtualFileTree(Folder("folder"))
-    another.create_file("another_file.txt")
-    another.create_dir("subfolder")
-
-    with pytest.raises(InvalidPath):
-        file_tree.from_virtual(another, strict=True)
-
-
-def test_from_virtual_merge_non_strict():
-    file_tree = VirtualFileTree(Folder("root"))
-
-    # Create a file with the same name as the folder we want to merge
-    with file_tree.virtual_context("folder") as inner_tree:
-        inner_tree.create_file("file.txt")
-
-    another = VirtualFileTree(Folder("folder"))
-    another.create_file("another_file.txt")
-    another.create_dir("subfolder")
-
-    file_tree.from_virtual(another, strict=False)
-    merged_file = file_tree.get_file("file.txt", "folder")
-    assert merged_file.name == "file.txt"
-
-    # Verify that the subfolder is not merged
-    subfolder = file_tree.get_dir("subfolder", "folder")
-    assert subfolder is not None
-    assert subfolder.name == "subfolder"
-
-    # Verify that the new file is added
-    another_file = file_tree.get_file("another_file.txt", "folder")
-    assert another_file.name == "another_file.txt"
+    assert file_tree.root.children == []

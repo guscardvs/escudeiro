@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import os
 from contextlib import contextmanager
 from functools import partial
-from typing import Self
+from typing import Any, Self
 
 from escudeiro.data import data
 from escudeiro.ds.filetree.helpers import resolve_error
@@ -33,6 +34,13 @@ class VirtualFileTree:
             folder = self._get_node(dirname, *path) or filetree.FsNode(dirname)
             vt = VirtualFileTree(folder)
             yield vt
+        except AssertionError as err:
+            if "PYTEST_CURRENT_TEST" in os.environ:
+                raise
+            else:
+                raise FailedFileOperation(
+                    "unable to complete virtual context after exception", err
+                ) from err
         except Exception as err:
             raise FailedFileOperation(
                 "unable to complete virtual context after exception", err
@@ -54,7 +62,20 @@ class VirtualFileTree:
             parent_node = self._internal.create_dir(parent, *restpath)
         else:
             parent_node = self._internal.root
-        parent_node.add_child(vt.root)
+        if curnode := parent_node.get_shallow(vt.name):
+            if curnode.is_file():
+                raise InvalidPath(
+                    f"Trying to create folder {curnode.name} where there is a file."
+                )
+            else:
+                for child in vt.root.children:
+                    if curnode.get_shallow(child.name):
+                        raise InvalidPath(
+                            f"Conflict: {child.name} already exists in {curnode.name}"
+                        )
+                    curnode.add_child(child)
+        else:
+            parent_node.add_child(vt.root)
 
     def create_file(
         self,
@@ -71,14 +92,14 @@ class VirtualFileTree:
         )
         try:
             parent = self._internal.get_node(*path)
-        except ValueError:
-            return file_maker()
+        except ValueError as err:
+            raise resolve_error(err)
         else:
             node = parent.get_shallow(filename)
             if not node:
                 return file_maker()
             elif node.content is None:
-                raise FailedFileOperation(
+                raise InvalidPath(
                     f"Trying to create file {node.name} where there is a folder."
                 )
             else:
@@ -121,7 +142,7 @@ class VirtualFileTree:
             append=append,
         )
 
-    def init_file(
+    def create_init_file(
         self,
         *path: str,
         content: str = "",
@@ -135,7 +156,10 @@ class VirtualFileTree:
         )
 
     def create_dir(self, dirname: str, *path: str) -> filetree.FsNode:
-        return self._internal.create_dir(dirname, *path)
+        try:
+            return self._internal.create_dir(dirname, *path)
+        except ValueError as err:
+            raise resolve_error(err)
 
     def get_path(self, pathname: str, *path: str) -> filetree.FsNode:
         try:
@@ -148,3 +172,20 @@ class VirtualFileTree:
                 raise InvalidPath("path not found")
             else:
                 return file
+
+    def __parse_dict__(self, by_alias: bool) -> dict[str, Any]:
+        output = {}
+        stack = [(self.root, output)]
+
+        while stack:
+            node, mapping = stack.pop()
+
+            if node.is_file():
+                mapping[node.name] = node.content
+            else:
+                new_mapping = {}
+                mapping[node.name] = new_mapping
+                for child in node.children:
+                    stack.append((child, new_mapping))
+
+        return output
