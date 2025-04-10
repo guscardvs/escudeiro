@@ -80,7 +80,7 @@ class EnvConfig(Config):
     default_env: Env | None = None
     strict: bool = True
 
-    def __init__(  # pyright: ignore[reportMissingSuperCall]
+    def __init__(
         self,
         *dotfiles: DotFile,
         env_var: str = "CONFIG_ENV",

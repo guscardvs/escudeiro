@@ -15,7 +15,7 @@ from unittest.mock import AsyncMock, Mock
 
 from escudeiro.lazyfields import (
     _UNSET,  # pyright: ignore[reportPrivateUsage]
-    AlazyContainer,
+    ALazyContainer,
     AsyncLazyField,
     LazyContainer,
     LazyField,
@@ -403,7 +403,7 @@ class AsyncLazyFieldTestFixture:
     def create_instance(self):
         return self.sample_class()
 
-    def get_container(self, instance: Any) -> AlazyContainer:
+    def get_container(self, instance: Any) -> ALazyContainer:
         """Get the AlazyContainer from an instance."""
         return getattr(instance, AsyncLazyField.make_private("field"))
 
@@ -624,7 +624,7 @@ async def test_asynclazyfield_with_inheritance():
 
     class Child(Base):
         @asynclazyfield
-        async def field(self):  # pyright: ignore[reportIncompatibleVariableOverride]
+        async def field(self):
             return "child"
 
     base = Base()
@@ -653,7 +653,7 @@ async def test_asynclazyfield_descriptor_protocol():
 async def test_alazycontainer_operations():
     """Test AlazyContainer operations directly."""
     lock = MockAsyncContextManager()
-    container = AlazyContainer("initial", lock)
+    container = ALazyContainer("initial", lock)
 
     # Test acquire
     content = await container.acquire()

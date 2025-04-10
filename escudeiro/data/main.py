@@ -248,7 +248,12 @@ def _get_slots_metadata(
         field for field in field_map if field not in reused_slots
     )
     for value in cls.__dict__.values():
-        if _is_descriptor_type(value):
+        if (
+            _is_descriptor_type(value)
+            and value.private_name not in slot_names
+            and value.private_name not in inherited_slots
+            and value.private_name not in reused_slots
+        ):
             slot_names += (value.private_name,)
         if (slots := slot.get_slots(value)) is not None:
             for extra in slots:
@@ -256,6 +261,7 @@ def _get_slots_metadata(
                     inherited_slots
                 ):
                     slot_names += (extra,)
+
     return inherited_slots | reused_slots | {"__slots__": tuple(slot_names)}
 
 

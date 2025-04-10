@@ -2,10 +2,11 @@ import contextlib
 import warnings
 from collections.abc import Callable, Coroutine
 from dataclasses import dataclass
+from functools import wraps
 from typing import Any, Self, cast, final, overload, override
 
 from escudeiro.data.slots import slot
-from escudeiro.misc.functions import asyncdo_with, do_with
+from escudeiro.misc.functions import asyncdo_with, do_with, make_noop
 
 
 class lazy:
@@ -48,7 +49,7 @@ class LazyContainer[T]:
 
 
 @dataclass
-class AlazyContainer[T]:
+class ALazyContainer[T]:
     content: T | type[_UNSET]
     lock: contextlib.AbstractAsyncContextManager
 
@@ -231,7 +232,7 @@ class AsyncLazyField[SelfT, T](lazy):
 
     async def _get_nosync(self, instance: SelfT) -> T:
         container = cast(
-            AlazyContainer[T],
+            ALazyContainer[T],
             # using object.__getattribute__ to bypass
             # custom implementations that change default behavior
             object.__getattribute__(instance, self.private_name),
@@ -250,7 +251,7 @@ class AsyncLazyField[SelfT, T](lazy):
         # using object.__setattr__ to bypass
         # custom implementations that might block
         # this operation
-        container = AlazyContainer(content, self.lock_factory())
+        container = ALazyContainer(content, self.lock_factory())
         object.__setattr__(instance, self.private_name, container)
         return container
 
@@ -265,7 +266,7 @@ class AsyncLazyField[SelfT, T](lazy):
             return
 
         container = cast(
-            AlazyContainer[T],
+            ALazyContainer[T],
             # using object.__getattribute__ to bypass
             # custom implementations that change default behavior
             object.__getattribute__(instance, self.private_name),
@@ -283,6 +284,7 @@ def mark_class(
     def _wrap[T](cls: type[T]) -> type[T]:
         original_init = cls.__init__
 
+        @wraps(original_init)
         def _init_(self: T, *args: Any, **kwargs: Any):
             original_init(self, *args, **kwargs)
             object.__setattr__(self, "_lazyfield_ctx_", ctx_factory())
@@ -373,10 +375,52 @@ def asynclazyfield[SelfT, T](
     return _wrap if func is None else _wrap(func)
 
 
-def is_initialized(instance: Any, attr: str) -> bool:
-    lazyf = getattr(type(instance), attr)
+def getlazyfield(instance: Any, attr: str) -> lazy:
+    cls: type | object = instance
+    if not isinstance(cls, type):
+        cls = type(cls)
+    lazyf = getattr(cls, attr)
     if not isinstance(lazyf, lazy):
-        raise TypeError(
-            f"Attribute {type(instance).__name__}.{attr} is not a lazyfield"
-        )
+        raise TypeError(f"Attribute {cls.__name__}.{attr} is not a lazyfield")
+    return lazyf
+
+
+@overload
+def _get_container(instance: Any, lazyf: LazyField) -> LazyContainer: ...
+@overload
+def _get_container(instance: Any, lazyf: AsyncLazyField) -> ALazyContainer: ...
+
+
+def _get_container(
+    instance: Any, lazyf: LazyField | AsyncLazyField
+) -> LazyContainer | ALazyContainer:
+    return object.__getattribute__(instance, lazyf.private_name)
+
+
+def is_initialized(instance: Any, attr: str) -> bool:
+    lazyf = getlazyfield(instance, attr)
     return hasattr(instance, lazyf.private_name)
+
+
+_mock_coroutine = make_noop(asyncio=True, returns=None)
+
+
+@overload
+def dellazy(instance: Any, lazyf: LazyField) -> None: ...
+@overload
+def dellazy(
+    instance: Any, lazyf: AsyncLazyField
+) -> Coroutine[None, None, None]: ...
+
+
+def dellazy(
+    instance: Any, lazyf: LazyField | AsyncLazyField
+) -> None | Coroutine[None, None, None]:
+    if not hasattr(instance, lazyf.private_name):
+        if isinstance(lazyf, AsyncLazyField):
+            return _mock_coroutine()
+        else:
+            return None
+
+    container = _get_container(instance, lazyf)
+    return container.put(_UNSET)
