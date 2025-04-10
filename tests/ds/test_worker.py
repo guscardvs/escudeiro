@@ -5,8 +5,8 @@ from typing import Any, final
 from uuid import uuid4
 
 import pytest
-from exceptiongroup import ExceptionGroup
-from gyver.misc import WorkerQueue
+
+from escudeiro.ds import WorkerQueue
 
 
 def get_worker_func(state: SimpleNamespace):

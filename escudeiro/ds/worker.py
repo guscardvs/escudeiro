@@ -2,8 +2,6 @@ import asyncio
 from collections.abc import Awaitable, Callable, Coroutine, Hashable
 from typing import Any, ClassVar, Self
 
-import exceptiongroup
-
 from escudeiro.data import data
 from escudeiro.lazyfields import lazyfield
 from escudeiro.misc.iterx import filter_isinstance
@@ -167,7 +165,7 @@ class WorkerQueue[T: Hashable, R]:
         if timeouts:
             excs = (excs or []) + timeouts
         if excs:
-            raise exceptiongroup.ExceptionGroup(
+            raise ExceptionGroup(
                 "WorkerQueue stopped due to the following exceptions", excs
             )
 

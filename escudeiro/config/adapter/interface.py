@@ -7,7 +7,7 @@ from collections.abc import (
 )
 from typing import TYPE_CHECKING, Any, Protocol, TypeVar
 
-from config import MISSING
+from escudeiro.config.interface import MISSING
 
 if TYPE_CHECKING:
     from dataclasses import Field

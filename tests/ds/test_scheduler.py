@@ -7,13 +7,13 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from gyver.misc.functions import make_noop
 
 # Import the actual classes
 from escudeiro.ds import CronInfo, Task, TaskScheduler
 
 # Import the classes to test - adjust path as needed
 from escudeiro.misc import timezone
+from escudeiro.misc.functions import make_noop
 
 
 # Fixtures for common test objects
