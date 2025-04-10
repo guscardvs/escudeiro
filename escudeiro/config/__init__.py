@@ -1,3 +1,5 @@
+from .adapter.cache import CachedFactory
+from .adapter.factory import AdapterConfigFactory
 from .concepts import Env
 from .core import utils
 from .core.config import Config
@@ -6,6 +8,8 @@ from .core.mapping import DEFAULT_MAPPING, EnvMapping
 from .interface import MISSING, ConfigLike, default_cast
 
 __all__ = [
+    "AdapterConfigFactory",
+    "CachedFactory",
     "Config",
     "ConfigLike",
     "DEFAULT_MAPPING",

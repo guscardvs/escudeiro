@@ -1,3 +1,5 @@
+# pyright: reportInvalidTypeForm=false
+
 import enum
 from collections.abc import Collection, Mapping
 from datetime import datetime, tzinfo
