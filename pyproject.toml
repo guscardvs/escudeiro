@@ -27,10 +27,13 @@ module-name = "escudeiro.escudeiro_pyrs"
 name = "cz_conventional_commits"
 tag_format = "$version"
 version_scheme = "pep440"
-version_provider = "poetry"
+version_provider = "cargo"
 update_changelog_on_bump = true
 major_version_zero = true
-version_files = ["escudeiro.__version__.py:__version__"]
+version_files = [
+    "escudeiro.__version__.py:__version__",
+    "pyproject.toml:version",
+]
 
 [tool.basedpyright]
 typeCheckingMode = "recommended"
