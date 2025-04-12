@@ -1,14 +1,19 @@
 [project]
 name = "escudeiro"
 version = "0.2.0"
-description = ""
-authors = [{ name = "Gustavo Cardoso" }]
+description = "The squire to your python projects."
+authors = [{ name = "Gustavo Cardoso", email = "dev.guscardvs@proton.me"}]
 readme = "README.md"
 requires-python = ">=3.12, <4.0.0"
 dependencies = [
     "typing-extensions (>=4.13.0,<5.0.0)",
     "orjson (>=3.10.16,<4.0.0)",
 ]
+license = "Apache License 2.0"
+license-files = ["LICEN[CS]E*"]
+
+[project.urls]
+github = "https://github.com/guscardvs/escudeiro"
 
 [project.optional-dependencies]
 pydantic = ["pydantic (>=2.0.0, <3.0.0)"]
