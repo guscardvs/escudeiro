@@ -34,6 +34,7 @@ version_files = [
     "escudeiro.__version__.py:__version__",
     "pyproject.toml:version",
 ]
+annotated_tag = true
 
 [tool.basedpyright]
 typeCheckingMode = "recommended"
