@@ -59,7 +59,7 @@ jobs:
           set -e
           python3 -m venv .venv
           source .venv/bin/activate
-          pip install escudeiro --find-links dist --force-reinstall
+          pip install escudeiro[pydantic,msgspec] --find-links dist --force-reinstall
           pip install -r dev-requirements.txt
           pytest
       - name: pytest
@@ -75,7 +75,7 @@ jobs:
             pip3 install -U -r dev-requirements.txt
           run: |
             set -e
-            pip3 install escudeiro --find-links dist --force-reinstall
+            pip3 install escudeiro[pydantic,msgspec] --find-links dist --force-reinstall
             pytest
 
   musllinux:
@@ -119,7 +119,7 @@ jobs:
             apk add py3-pip py3-virtualenv
             python3 -m virtualenv .venv
             source .venv/bin/activate
-            pip install escudeiro --no-index --find-links dist --force-reinstall
+            pip install escudeiro[pydantic,msgspec] --no-index --find-links dist --force-reinstall
             pip install -r dev-requirements.txt
             pytest
       - name: pytest
@@ -136,7 +136,7 @@ jobs:
             python3 -m virtualenv .venv
             source .venv/bin/activate
             pip install -r dev-requirements.txt
-            pip install escudeiro --find-links dist --force-reinstall
+            pip install escudeiro[pydantic,msgspec] --find-links dist --force-reinstall
             pytest
 
   windows:
@@ -172,7 +172,7 @@ jobs:
           set -e
           python3 -m venv .venv
           source .venv/Scripts/activate
-          pip install escudeiro --find-links dist --force-reinstall
+          pip install escudeiro[pydantic,msgspec] --find-links dist --force-reinstall
           pip install -r dev-requirements.txt
           pytest
 
@@ -206,7 +206,7 @@ jobs:
           set -e
           python3 -m venv .venv
           source .venv/bin/activate
-          pip install escudeiro --find-links dist --force-reinstall
+          pip install escudeiro[pydantic,msgspec] --find-links dist --force-reinstall
           pip install -r dev-requirements.txt
           pytest
 
@@ -254,7 +254,7 @@ jobs:
           set -e
           pyodide venv .venv
           source .venv/bin/activate
-          pip install escudeiro --find-links dist --force-reinstall
+          pip install escudeiro[pydantic,msgspec] --find-links dist --force-reinstall
           pip install -r dev-requirements.txt
           python -m pytest
 
