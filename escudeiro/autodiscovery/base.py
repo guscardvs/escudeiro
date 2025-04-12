@@ -59,20 +59,20 @@ class AutoDiscoveryHelper:
         self.exts = (".py", *self.exts)
 
     @lazyfield
-    def _excludes(self) -> tuple[tuple[str, ...], tuple[Path, ...]]:
+    def excludes(self) -> tuple[tuple[str, ...], tuple[Path, ...]]:
         str_exclude = tuple(filter_isinstance(str, self.exclude))
         path_exclude = tuple(filter_isinstance(pathlib.Path, self.exclude))
         return str_exclude, path_exclude
 
     @lazyfield
-    def _includes(self) -> tuple[tuple[str, ...], tuple[Path, ...]]:
+    def includes(self) -> tuple[tuple[str, ...], tuple[Path, ...]]:
         str_include = tuple(filter_isinstance(str, self.include))
         path_include = tuple(filter_isinstance(pathlib.Path, self.include))
         return str_include, path_include
 
-    def _should_look(self, path: Path) -> bool:
-        str_exclude, path_exclude = self._excludes
-        str_include, path_include = self._includes
+    def should_lookup(self, path: Path) -> bool:
+        str_exclude, path_exclude = self.excludes
+        str_include, path_include = self.includes
         _, ext = os.path.splitext(path)
 
         should_look = (
@@ -104,7 +104,7 @@ class AutoDiscoveryHelper:
             if not path.is_dir():
                 yield path
                 continue
-            for item in filter(self._should_look, path.iterdir()):
+            for item in filter(self.should_lookup, path.iterdir()):
                 if item.is_dir():
                     stack.append(item)
                 else:
