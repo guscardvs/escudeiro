@@ -100,7 +100,7 @@ async def test_asynccontext_multitask():
     tasks = []
     for _ in range(5):
         tasks.append(asyncio.create_task(worker()))
-    await asyncio.gather(*tasks)
+    _ = await asyncio.gather(*tasks)
 
 
 async def test_bound_async_context_client_yields_the_same_client_in_context():
