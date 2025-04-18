@@ -3,7 +3,7 @@ from collections.abc import AsyncGenerator, Collection, Sequence
 
 import pytest
 
-from escudeiro.misc.iterx import (
+from escudeiro.misc import (
     aall,
     aany,
     acarrymap,

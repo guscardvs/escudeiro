@@ -230,7 +230,7 @@ def cache[**P, T](f: Callable[P, T]) -> Callable[P, T]:
             return fibonacci(n-1) + fibonacci(n-2)
         ```
     """
-    return typing.cast(Callable[P, T], functools.cache(f))  # pyright: ignore[reportInvalidCast]
+    return typing.cast(Callable[P, T], functools.cache(f))
 
 
 @overload

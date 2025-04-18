@@ -2,7 +2,7 @@ import pathlib
 from types import ModuleType
 
 from escudeiro import autodiscovery
-from escudeiro.misc.iterx import filter_isinstance, filter_issubclass
+from escudeiro.misc import filter_isinstance, filter_issubclass
 
 
 def test_static_autodiscovery_childof(

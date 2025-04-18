@@ -12,8 +12,7 @@ import pytest
 from escudeiro.ds import CronInfo, Task, TaskScheduler
 
 # Import the classes to test - adjust path as needed
-from escudeiro.misc import timezone
-from escudeiro.misc.functions import make_noop
+from escudeiro.misc import make_noop, timezone
 
 
 # Fixtures for common test objects

@@ -1,14 +1,19 @@
+"""Utilities for context managers, with type casting and async compatibility.
+
+This module provides utilities for working with context managers, including
+type casting and compatibility with asynchronous context managers.
+"""
+
 from contextlib import AbstractAsyncContextManager, AbstractContextManager
+from dataclasses import dataclass
 from types import TracebackType
 from typing import Any, final, override
 
 from typing_extensions import TypeIs
 
-from escudeiro.data import data
-
 
 @final
-@data
+@dataclass
 class AsyncContextWrapper[T](AbstractAsyncContextManager):
     """Wraps a synchronous context manager to be used in an asynchronous context.
 

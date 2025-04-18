@@ -4,7 +4,7 @@ from time import time
 from typing import Any
 
 from escudeiro.data import call_init, data
-from escudeiro.exc.errors import ErrorGroup
+from escudeiro.exc import ErrorGroup
 
 from .resource import Resource
 

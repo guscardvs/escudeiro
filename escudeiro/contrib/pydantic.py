@@ -3,7 +3,7 @@ from typing import Any, ClassVar, override
 from pydantic import BaseModel, ConfigDict
 
 from escudeiro.lazyfields import lazy
-from escudeiro.misc.strings import to_camel
+from escudeiro.misc import to_camel
 
 
 class Model(BaseModel):

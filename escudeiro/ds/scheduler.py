@@ -8,8 +8,7 @@ from escudeiro.data import data, field
 from escudeiro.ds.manager import TaskManager
 from escudeiro.escudeiro_pyrs import cronjob
 from escudeiro.lazyfields import lazyfield
-from escudeiro.misc import timezone
-from escudeiro.misc.functions import make_noop
+from escudeiro.misc import make_noop, now
 
 
 @data(frozen=False)
@@ -293,7 +292,7 @@ class TaskScheduler:
         if task.cron:
             try:
                 task.cron.update_after(
-                    timezone.now().replace(second=0, microsecond=0)
+                    now().replace(second=0, microsecond=0)
                     + timedelta(minutes=1)
                 )
                 task.next_run = task.cron.next_run
@@ -312,11 +311,13 @@ class TaskScheduler:
         sleeping between checks based on next scheduled run.
         """
         while self._running:
-            now = timezone.now()
+            timestamp = now()
 
             # Find and execute due tasks
             due_tasks = [
-                task for task in self._tasks.values() if task.next_run <= now
+                task
+                for task in self._tasks.values()
+                if task.next_run <= timestamp
             ]
 
             # Check status only for tasks we'll actually run
@@ -338,9 +339,7 @@ class TaskScheduler:
         # Sleep for a short interval before next check
         if self._tasks:
             next_run_time = min(task.next_run for task in self._tasks.values())
-            sleep_time = max(
-                0, (next_run_time - timezone.now()).total_seconds()
-            )
+            sleep_time = max(0, (next_run_time - now()).total_seconds())
         else:
             sleep_time = self.default_sleep_interval
         await asyncio.sleep(sleep_time)

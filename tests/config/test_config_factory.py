@@ -16,7 +16,7 @@ from escudeiro.config.adapter.squire import SquireResolverStrategy
 from escudeiro.data import data
 from escudeiro.data.converters import asdict as squire_asdict
 from escudeiro.data.utils.functions import disassemble_type
-from escudeiro.exc.errors import InvalidCast
+from escudeiro.exc import InvalidCast
 from escudeiro.misc import jsonx
 
 

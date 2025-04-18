@@ -1,3 +1,4 @@
+# pyright: reportPrivateUsage=false
 import asyncio
 import contextlib
 import threading
@@ -14,7 +15,7 @@ from typing import Any, Self, final, override
 from unittest.mock import AsyncMock, Mock
 
 from escudeiro.lazyfields import (
-    _UNSET,  # pyright: ignore[reportPrivateUsage]
+    _UNSET,
     ALazyContainer,
     AsyncLazyField,
     LazyContainer,
@@ -391,7 +392,7 @@ class AsyncLazyFieldTestFixture:
         field_value = self.field_value
         lock_factory = self.lock_factory
 
-        @mark_class(lock_factory)
+        @mark_class(actx_factory=lock_factory)
         class Sample:
             @asynclazyfield(lock_factory=lock_factory)
             async def field(self):
@@ -572,7 +573,7 @@ async def test_asynclazyfield_concurrent_access():
     """Test that AsyncLazyField handles concurrent access correctly."""
 
     @final
-    @mark_class(asyncio.Lock)
+    @mark_class(actx_factory=asyncio.Lock)
     class SlowSample:
         call_count = 0
 
@@ -694,7 +695,7 @@ async def test_asynclazyfield_decorated_methods():
     # Test with custom lock factory
     lock = MockAsyncContextManager()
 
-    @mark_class(lock)
+    @mark_class(actx_factory=lock)
     class Sample3:
         @asynclazyfield(lock_factory=lambda: lock)
         async def method3(self):

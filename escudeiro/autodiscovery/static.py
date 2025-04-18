@@ -9,8 +9,7 @@ from tokenize import TokenError, tokenize
 from typing import Any, Literal
 
 from escudeiro.data import data
-from escudeiro.misc.iterx import filter_isinstance
-from escudeiro.misc.lazy import lazymethod
+from escudeiro.misc import filter_isinstance, lazymethod
 
 from .base import (
     AutoDiscoveryHelper,

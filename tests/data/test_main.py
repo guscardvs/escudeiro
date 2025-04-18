@@ -293,6 +293,8 @@ def test_define_creates_ordering_only_for_direct_instances():
     with pytest.raises(TypeError):
         _ = A(1) < B(1)
 
+    assert B(2) > B(1)  # ordering is inherited but not contravariant
+
 
 def test_define_creates_hashable_classes():
     @data
@@ -343,7 +345,9 @@ def test_define_does_not_create_hashable_when_it_shouldnt():
     with pytest.raises(TypeError) as exc_info:
         _ = data(hash=True)(C)
 
-    assert exc_info.value.args == ("field type is not hashable", "x", C)
+    assert exc_info.value.args == (
+        f"field type is not hashable: {list[int]!r} (field 'x' in C)",
+    )
     assert not issubclass(data(C), Hashable), (
         "should not complain if class does not want explicitly hash"
     )

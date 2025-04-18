@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 
 from escudeiro.config import DotFile, Env, EnvConfig, EnvMapping
-from escudeiro.exc.errors import InvalidCast, MissingName
+from escudeiro.exc import InvalidCast, MissingName
 
 PARENT_DIR = curpath = Path(__file__).resolve().parent
 

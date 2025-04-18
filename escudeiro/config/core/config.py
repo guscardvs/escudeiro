@@ -5,9 +5,9 @@ from typing import Any, TextIO, overload
 
 from escudeiro.config.interface import MISSING, default_cast
 from escudeiro.data import data
-from escudeiro.exc.errors import InvalidCast, MissingName
+from escudeiro.exc import InvalidCast, MissingName
 from escudeiro.lazyfields import lazyfield
-from escudeiro.misc.strings import (
+from escudeiro.misc import (
     closing_quote_position,
     sentence,
     strip_comment,

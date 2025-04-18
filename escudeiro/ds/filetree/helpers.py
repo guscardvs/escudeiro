@@ -1,7 +1,7 @@
 from typing import TYPE_CHECKING
 
 from escudeiro.escudeiro_pyrs import filetree
-from escudeiro.exc.errors import (
+from escudeiro.exc import (
     DuplicateFile,
     InvalidParamType,
     InvalidPath,

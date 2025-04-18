@@ -1,3 +1,5 @@
+"""Small wrapper module around orjson to have a similar interface to builtins.json"""
+
 from collections.abc import Callable
 from typing import Any, BinaryIO, TextIO
 

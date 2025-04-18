@@ -6,13 +6,13 @@ from pathlib import Path
 from types import NoneType
 from typing import Any, Literal, NamedTuple, TypeVar, final
 
-from escudeiro.exc.errors import (
+from escudeiro.exc import (
     InvalidCast,
     InvalidEnv,
     MissingName,
     StrictCast,
 )
-from escudeiro.misc.strings import sentence
+from escudeiro.misc import sentence
 
 
 @final

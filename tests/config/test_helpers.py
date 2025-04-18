@@ -15,7 +15,7 @@ from escudeiro.config.core.utils import (
     valid_path,
     with_rule,
 )
-from escudeiro.exc.errors import InvalidCast, InvalidEnv, MissingName
+from escudeiro.exc import InvalidCast, InvalidEnv, MissingName
 
 
 def test_boolean_returns_valid_bool():

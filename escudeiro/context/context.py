@@ -12,7 +12,7 @@ from escudeiro.lazyfields import asynclazyfield, dellazy, lazyfield, mark_class
 class Context[T]:
     adapter: Adapter[T]
 
-    @lazyfield()
+    @lazyfield
     def stack(self) -> int:
         return 0
 

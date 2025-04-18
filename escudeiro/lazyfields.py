@@ -6,7 +6,7 @@ from functools import wraps
 from typing import Any, Self, cast, final, overload, override
 
 from escudeiro.data.slots import slot
-from escudeiro.misc.functions import asyncdo_with, do_with, make_noop
+from escudeiro.misc import asyncdo_with, do_with, make_noop
 
 
 class lazy:
@@ -94,9 +94,11 @@ class LazyField[SelfT, T](lazy):
         return self._do_get(instance)
 
     def _do_get(self, instance: SelfT) -> T:
-        is_marked_instance = is_marked(instance)
+        is_marked_instance = check_marking(instance, is_async=False)
         lock = (
-            self._internal_lock if not is_marked_instance else get_ctx(instance)
+            self._internal_lock
+            if not is_marked_instance
+            else get_ctx(instance, is_async=False)
         )
 
         if (
@@ -142,9 +144,11 @@ class LazyField[SelfT, T](lazy):
         return container
 
     def __set__(self, instance: SelfT, value: T):
-        is_marked_instance = is_marked(instance)
+        is_marked_instance = check_marking(instance, is_async=False)
         lock = (
-            self._internal_lock if not is_marked_instance else get_ctx(instance)
+            self._internal_lock
+            if not is_marked_instance
+            else get_ctx(instance, is_async=False)
         )
 
         if (
@@ -203,9 +207,11 @@ class AsyncLazyField[SelfT, T](lazy):
         return self._do_get(instance)
 
     def _do_get(self, instance: SelfT) -> Callable[[], Coroutine[Any, Any, T]]:
-        is_marked_instance = is_marked(instance)
+        is_marked_instance = check_marking(instance, is_async=True)
         lock = (
-            self._internal_lock if not is_marked_instance else get_ctx(instance)
+            self._internal_lock
+            if not is_marked_instance
+            else get_ctx(instance, is_async=True)
         )
         if (
             lock is self._internal_lock
@@ -278,16 +284,30 @@ class AsyncLazyField[SelfT, T](lazy):
 
 
 def mark_class(
-    ctx_factory: Callable[[], contextlib.AbstractAsyncContextManager]
-    | Callable[[], contextlib.AbstractContextManager],
+    ctx_factory: Callable[[], contextlib.AbstractContextManager] | None = None,
+    actx_factory: Callable[[], contextlib.AbstractAsyncContextManager]
+    | None = None,
 ):
+    """Mark a class for proper lazyfield isolation, supporting both sync and async fields.
+
+    Args:
+        ctx_factory: Factory for synchronous locks (used by @lazyfield)
+        actx_factory: Factory for async locks (used by @asynclazyfield)
+    """
+
     def _wrap[T](cls: type[T]) -> type[T]:
         original_init = cls.__init__
 
         @wraps(original_init)
         def _init_(self: T, *args: Any, **kwargs: Any):
             original_init(self, *args, **kwargs)
-            object.__setattr__(self, "_lazyfield_ctx_", ctx_factory())
+            # Store both factories if provided
+            if ctx_factory is not None:
+                object.__setattr__(self, "_lazyfield_sync_ctx_", ctx_factory())
+            if actx_factory is not None:
+                object.__setattr__(
+                    self, "_lazyfield_async_ctx_", actx_factory()
+                )
 
         type.__setattr__(cls, "__init__", _init_)
         type.__setattr__(cls, "_lazyfield_marked_", True)
@@ -300,8 +320,18 @@ def is_marked(val: Any) -> bool:
     return getattr(val, "_lazyfield_marked_", False)
 
 
-def get_ctx(val: Any):
-    return object.__getattribute__(val, "_lazyfield_ctx_")
+def check_marking(instance: Any, is_async: bool):
+    if not is_marked(instance):
+        return False
+
+    ctx_attr = "_lazyfield_async_ctx_" if is_async else "_lazyfield_sync_ctx_"
+    return hasattr(instance, ctx_attr)
+
+
+def get_ctx(instance: Any, is_async: bool):
+    if is_async:
+        return object.__getattribute__(instance, "_lazyfield_async_ctx_")
+    return object.__getattribute__(instance, "_lazyfield_sync_ctx_")
 
 
 @overload
@@ -330,7 +360,9 @@ def lazyfield[SelfT, T](
     LazyField[SelfT, T] | Callable[[Callable[[SelfT], T]], LazyField[SelfT, T]]
 ):
     def _wrap(func: Callable[[SelfT], T]) -> LazyField[SelfT, T]:
-        return slot.make("_lazyfield_ctx_", value=LazyField(func, lock_factory))
+        return slot.make(
+            "_lazyfield_sync_ctx_", value=LazyField(func, lock_factory)
+        )
 
     return _wrap if func is None else _wrap(func)
 
@@ -369,7 +401,8 @@ def asynclazyfield[SelfT, T](
         func: Callable[[SelfT], Coroutine[Any, Any, T]],
     ) -> AsyncLazyField[SelfT, T]:
         return slot.make(
-            "_lazyfield_ctx_", value=AsyncLazyField(func, lock_factory)
+            "_lazyfield_async_ctx_",
+            value=AsyncLazyField(func, lock_factory),
         )
 
     return _wrap if func is None else _wrap(func)

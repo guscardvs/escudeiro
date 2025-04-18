@@ -3,9 +3,9 @@ from collections.abc import Sequence
 from enum import Enum
 from typing import Any, override
 
-from escudeiro.lazyfields import lazyfield
-from escudeiro.misc import strings
 from escudeiro.misc.iterx import next_or
+from escudeiro.misc.lazy import lazymethod
+from escudeiro.misc.strings import to_camel, to_kebab, to_pascal, to_snake
 
 
 class StrEnum(str, Enum):
@@ -18,10 +18,10 @@ class StrEnum(str, Enum):
     @classmethod
     @override
     def _missing_(cls, value: object) -> Any:
-        return next_or(item for item in cls if value in item.aliases)
+        return next_or(item for item in cls if value in item.get_aliases())
 
-    @lazyfield
-    def aliases(self) -> Sequence[str]:
+    @lazymethod
+    def get_aliases(self) -> Sequence[str]:
         return tuple(
             OrderedDict.fromkeys(
                 (
@@ -29,9 +29,9 @@ class StrEnum(str, Enum):
                     self.name,
                     self.name.upper(),
                     self.name.lower(),
-                    strings.to_camel(self.name),
-                    strings.to_pascal(self.name),
-                    strings.to_kebab(self.name),
+                    to_camel(self.name),
+                    to_pascal(self.name),
+                    to_kebab(self.name),
                 )
             )
         )
@@ -71,7 +71,7 @@ class SnakeEnum(StrEnum):
     def _generate_next_value_(
         name: str, start: int, count: int, last_values: list[Any]
     ) -> Any:
-        return strings.to_snake(name)
+        return to_snake(name)
 
 
 class CamelEnum(StrEnum):
@@ -86,7 +86,7 @@ class CamelEnum(StrEnum):
     def _generate_next_value_(
         name: str, start: int, count: int, last_values: list[Any]
     ) -> Any:
-        return strings.to_camel(name)
+        return to_camel(name)
 
 
 class PascalEnum(StrEnum):
@@ -101,7 +101,7 @@ class PascalEnum(StrEnum):
     def _generate_next_value_(
         name: str, start: int, count: int, last_values: list[Any]
     ) -> Any:
-        return strings.to_pascal(name)
+        return to_pascal(name)
 
 
 class KebabEnum(StrEnum):
@@ -116,7 +116,7 @@ class KebabEnum(StrEnum):
     def _generate_next_value_(
         name: str, start: int, count: int, last_values: list[Any]
     ) -> Any:
-        return strings.to_kebab(name)
+        return to_kebab(name)
 
 
 # If combining many of those utilities, inherit the NameEnum or ValueEnum first,

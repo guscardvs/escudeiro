@@ -3,7 +3,7 @@ from collections.abc import Iterator, MutableMapping
 from typing import override
 
 from escudeiro.data import data, field
-from escudeiro.exc.errors import KeyAlreadyRead
+from escudeiro.exc import KeyAlreadyRead
 
 
 @data

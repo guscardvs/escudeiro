@@ -6,7 +6,7 @@ from hypothesis import given
 from hypothesis.strategies import text
 
 from escudeiro import config
-from escudeiro.exc.errors import InvalidCast, MissingName
+from escudeiro.exc import InvalidCast, MissingName
 
 
 @given(text(), text())
