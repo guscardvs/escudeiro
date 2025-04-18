@@ -1,17 +1,24 @@
+"""Utilities for lazy method evaluation with argument-sensitive caching.
+
+This module provides a decorator class for lazily evaluating instance methods,
+optionally caching results based on their argument signature. It supports different
+caching strategies depending on the method’s parameter types.
+"""
+
 import enum
 from collections.abc import Callable, Hashable, Sequence
 from functools import wraps
-from inspect import signature
+from inspect import Parameter, signature
 from typing import (
     Any,
     ClassVar,
     Concatenate,
     Self,
     cast,
-    get_args,
-    get_origin,
     overload,
 )
+
+from escudeiro.misc.typex import is_hashable
 
 
 class MethodType(enum.Enum):
@@ -27,6 +34,9 @@ class lazymethod[SelfT, T, **P]:
         "private_name",
         "_method_type",
         "_container",
+        "_pos_map",
+        "_signature_length",
+        "_default_map",
     )
 
     format_: ClassVar[str] = "_lazymethod_{method_name}_"
@@ -37,6 +47,26 @@ class lazymethod[SelfT, T, **P]:
         self._container = self._get_container()
         self.public_name = func.__name__
         self.private_name = self.format_.format(method_name=func.__name__)
+        self._pos_map, self._default_map = self._make_signature_maps(
+            func, self._method_type
+        )
+        self._signature_length = len(self._pos_map)
+
+    def _make_signature_maps(
+        self, func: Callable, method_type: MethodType
+    ) -> tuple[dict[int, str], dict[str, Any]]:
+        if method_type is MethodType.SELF_ONLY:
+            return {}, {}
+        sig = signature(func)
+        pos_map = {}
+        default_map = {}
+
+        for pos, param in enumerate(tuple(sig.parameters.values())[1:], 1):
+            pos_map[pos] = param.name
+            if param.default is not Parameter.empty:
+                default_map[param.name] = param.default
+
+        return pos_map, default_map
 
     def _determine_method_type(self, func: Callable) -> MethodType:
         sig = signature(func)
@@ -44,26 +74,20 @@ class lazymethod[SelfT, T, **P]:
             return MethodType.SELF_ONLY
         elif all(
             param.annotation is not param.empty
-            and self._is_hashable(param.annotation)
+            and self.is_hashable(param.annotation)
             for param in tuple(sig.parameters.values())[1:]
         ):
             return MethodType.HASHABLE_ARGS
         else:
             return MethodType.UNKNOWN_OR_UNHASHABLE
 
-    def _is_hashable(self, annotation: Any) -> bool:
-        if origin := get_origin(annotation):
-            args = get_args(annotation)
-            return self._is_hashable(origin) and all(
-                self._is_hashable(arg) for arg in args
-            )
-        if isinstance(annotation, type):
-            return issubclass(annotation, Hashable)
-        return False
+    @staticmethod
+    def is_hashable(annotation: Any) -> bool:
+        return is_hashable(annotation)
 
     def _get_container(
         self,
-    ) -> type[dict[Hashable, T] | list[tuple[Any, T]]] | None:
+    ) -> type[dict[Hashable, T]] | type[list[tuple[Any, T]]] | None:
         match self._method_type:
             case MethodType.SELF_ONLY:
                 return None
@@ -116,18 +140,20 @@ class lazymethod[SelfT, T, **P]:
         if self._container is None:
             object.__setattr__(instance, self.private_name, value)
         elif self._container is dict:
+            kwargs_only = self._signature_to_kwargs(args, kwargs)
             container = cast(
                 dict[Hashable, T],
                 getattr(instance, self.private_name, self._container()),
             )
-            container[(*args, tuple(kwargs.items()))] = value
+            container[frozenset(kwargs_only.items())] = value
             object.__setattr__(instance, self.private_name, container)
         elif self._container is list:
+            kwargs_only = self._signature_to_kwargs(args, kwargs)
             container = cast(
                 list[tuple[Any, T]],
                 getattr(instance, self.private_name, self._container()),
             )
-            container.append(((*args, tuple(kwargs.items())), value))
+            container.append((tuple(kwargs_only.items()), value))
             object.__setattr__(instance, self.private_name, container)
         return value
 
@@ -144,15 +170,30 @@ class lazymethod[SelfT, T, **P]:
             container = getattr(instance, name, None)
             if container is None:
                 return None
-            return container.get((*args, tuple(kwargs.items())))
+            kwargs_only = self._signature_to_kwargs(args, kwargs)
+            return container.get(frozenset(kwargs_only.items()))
         elif self._container is list:
             container = getattr(instance, name, None)
             if container is None:
                 return None
+            kwargs_only = self._signature_to_kwargs(args, kwargs)
             for item in container:
-                if item[0] == (*args, tuple(kwargs.items())):
+                if item[0] == tuple(kwargs_only.items()):
                     return item[1]
             return None
+
+    def _signature_to_kwargs(
+        self, args: Sequence[Any], kwargs: dict[str, Any]
+    ) -> dict[str, Any]:
+        result = kwargs.copy()
+        if args:
+            for pos, arg in enumerate(args, 1):
+                result[self._pos_map[pos]] = arg
+        if len(result) != self._signature_length:
+            for name, value in self._default_map.items():
+                if name not in result:
+                    result[name] = value
+        return {k: result[k] for k in sorted(result)}
 
     @classmethod
     def is_initialized(cls, instance: SelfT, name: str) -> bool:

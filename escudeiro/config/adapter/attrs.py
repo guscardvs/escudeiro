@@ -7,7 +7,7 @@ from attrs import NOTHING, Attribute, fields
 from escudeiro.config.adapter.interface import FieldResolverStrategy
 from escudeiro.config.interface import MISSING
 from escudeiro.data import data
-from escudeiro.exc.errors import InvalidCast
+from escudeiro.exc import InvalidCast
 from escudeiro.misc import strings
 
 

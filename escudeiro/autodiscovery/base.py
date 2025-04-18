@@ -9,12 +9,10 @@ from collections.abc import Callable, Iterator, Sequence
 from inspect import getsourcelines
 from pathlib import Path
 from types import ModuleType
-from typing import TYPE_CHECKING
 
 from escudeiro.data import data
 from escudeiro.lazyfields import lazyfield
-from escudeiro.misc.iterx import filter_isinstance
-from escudeiro.misc.lazy import lazymethod
+from escudeiro.misc import filter_isinstance, lazymethod
 
 type PathConverter = Callable[[Path], str]
 type StrOrPath = str | Path
@@ -181,13 +179,12 @@ def smart_import(modfullname: str, resolver: PathConverter) -> ModuleType:
         return sys.modules[modname]
 
     main = sys.modules.get("__main__")
+
     main_modname = ""
     if main and (main_file := getattr(main, "__file__", None)):
         main_modname = resolver(Path(main_file))
 
-    if main_modname == modname:
-        if TYPE_CHECKING:
-            assert main is not None
+    if main and main_modname == modname:
         return main
     return importlib.import_module(modfullname)
 

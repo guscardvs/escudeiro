@@ -102,7 +102,7 @@ def squire_method(
 def squire_method(
     method_name: str, instance: Any, *args: Any, **kwargs: Any
 ) -> Any:
-    _do_nothing(instance)
+    noop_validator(instance)
     method_name = method_name.strip("_")
     return (
         getattr(instance, f"__squire_{method_name}__", None)
@@ -198,7 +198,7 @@ def update_ref(cls: type):
 
 
 @validate_type
-def _do_nothing(val: Any):
+def noop_validator(val: Any):
     return val
 
 
@@ -206,7 +206,7 @@ def _extract_klass(mod: ModuleType):
     items = []
     for _, obj in inspect.getmembers(mod):
         with suppress(TypeError):
-            items.append(_do_nothing(obj))
+            items.append(noop_validator(obj))
     return items
 
 

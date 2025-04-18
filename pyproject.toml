@@ -2,7 +2,7 @@
 name = "escudeiro"
 version = "0.2.1"
 description = "The squire to your python projects."
-authors = [{ name = "Gustavo Cardoso", email = "dev.guscardvs@proton.me"}]
+authors = [{ name = "Gustavo Cardoso", email = "dev.guscardvs@proton.me" }]
 readme = "README.md"
 requires-python = ">=3.12, <4.0.0"
 dependencies = [
@@ -57,6 +57,7 @@ reportUnannotatedClassAttribute = false
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "module"
 addopts = [
     "--cov=escudeiro/",
     "--cov=tests",

@@ -1,7 +1,7 @@
 from collections.abc import Sequence
 from typing import Protocol, final, override
 
-from escudeiro.misc.strings import to_camel
+from escudeiro.misc import to_camel
 
 template = (
     '"title": "{title}"',

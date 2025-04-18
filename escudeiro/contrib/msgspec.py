@@ -4,8 +4,7 @@ from typing import Any, Literal, overload
 import msgspec
 
 from escudeiro.lazyfields import lazy
-from escudeiro.misc import strings
-from escudeiro.misc.iterx import filter_isinstance, next_or
+from escudeiro.misc import filter_isinstance, next_or, strings
 
 
 class SquireStruct(msgspec.Struct):

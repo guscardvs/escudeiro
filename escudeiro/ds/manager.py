@@ -9,7 +9,7 @@ from uuid import uuid4
 
 from escudeiro.data import data
 from escudeiro.lazyfields import is_initialized, lazyfield
-from escudeiro.misc.iterx import moving_window
+from escudeiro.misc import moving_window
 
 
 @data

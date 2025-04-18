@@ -3,7 +3,7 @@ import pytest
 
 from escudeiro.data.converters.utils import asdict
 from escudeiro.ds import VirtualFileTree
-from escudeiro.exc.errors import FailedFileOperation, InvalidPath
+from escudeiro.exc import FailedFileOperation, InvalidPath
 
 
 def test_create_dir():

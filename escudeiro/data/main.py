@@ -1,6 +1,6 @@
 import dataclasses
 import sys
-from collections.abc import Callable, Generator, Hashable, Mapping, Sequence
+from collections.abc import Callable, Generator, Mapping, Sequence
 from datetime import date, datetime, time, timedelta
 from enum import Enum
 from typing import (
@@ -26,6 +26,7 @@ from escudeiro.data.schema import (
     str_cast,
 )
 from escudeiro.data.slots import slot
+from escudeiro.misc.typex import is_hashable
 
 from .field_ import Field, FieldInfo, field
 from .methods import ArgumentType, MethodBuilder, MethodType
@@ -740,7 +741,6 @@ def _get_hash(cls: type, fields_map: FieldMap, wants_hash: bool):
         if not f.hash:
             continue
         arg = f"self.{f.name}"
-        field_type = f.origin or f.declared_type
         if f.hash is not True:
             glob = f"_hash_{f.name}"
             arg = f"{glob}({arg})"
@@ -749,12 +749,12 @@ def _get_hash(cls: type, fields_map: FieldMap, wants_hash: bool):
             glob = f"_hash_{f.name}"
             arg = f"{glob}({arg})"
             _ = builder.add_glob(glob, f.eq)
-        elif not isinstance(field_type, type):  # pyright: ignore[reportUnnecessaryIsInstance]
-            pass  # Do not handle aliases and annotations
-        elif not issubclass(field_type, Hashable):
+        elif not is_hashable(f.declared_type):
             if not wants_hash:
                 continue
-            raise TypeError("field type is not hashable", f.name, cls)
+            raise TypeError(
+                f"field type is not hashable: {f.declared_type!r} (field '{f.name}' in {cls.__name__})"
+            )
         args.append(arg)
 
     # if it only contains the class and no field qualifies for hashing

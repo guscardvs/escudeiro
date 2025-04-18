@@ -2,7 +2,7 @@ from collections.abc import Generator
 from contextlib import asynccontextmanager, contextmanager
 from typing import Any, Self, final
 
-from escudeiro.misc.contextx import AsyncContextWrapper, is_async_context
+from escudeiro.misc import AsyncContextWrapper, is_async_context
 
 
 @final

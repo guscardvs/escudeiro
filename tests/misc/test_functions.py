@@ -1,13 +1,15 @@
+# pyright: reportMissingParameterType=false
+
 import asyncio
 import contextlib
 from collections.abc import AsyncIterable, Callable
 from datetime import UTC, date, datetime, time
-from typing import Any
+from typing import Annotated, Any, Literal, override
 from unittest.mock import AsyncMock, Mock
 
 import pytest
 
-from escudeiro.misc.functions import (
+from escudeiro.misc import (
     FrozenCoroutine,
     as_async,
     as_async_iterable,
@@ -22,6 +24,7 @@ from escudeiro.misc.functions import (
     raise_insteadof,
     safe_cast,
 )
+from escudeiro.misc.typex import is_hashable
 
 
 class TestSafeCast:
@@ -497,3 +500,95 @@ class TestRaiseInsteadof:
         with raise_insteadof(KeyError, ValueError, "Custom message"):
             x = 1 + 1
         assert x == 2
+
+
+# ==== Types that SHOULD be hashable ====
+@pytest.mark.parametrize(
+    "typ",
+    [
+        int,
+        str,
+        float,
+        bool,
+        type(None),
+        int | None,
+        int | str,
+        tuple[int, str],
+        Literal[1, 2, 3],
+        Annotated[int, "metadata"],
+        frozenset[str],
+    ],
+)
+def test_hashable_types(typ):
+    assert is_hashable(typ), f"{typ} should be hashable"
+
+
+# ==== Types that SHOULD NOT be hashable ====
+@pytest.mark.parametrize(
+    "typ",
+    [
+        list[int],
+        set[str],
+        dict[str, int],
+        list[str] | None,
+        str | list[str],
+        tuple[int, list[int]],
+        Annotated[list[int], "metadata"],
+    ],
+)
+def test_unhashable_types(typ):
+    assert not is_hashable(typ), f"{typ} should NOT be hashable"
+
+
+# ==== Edge: recursive or nested generics ====
+@pytest.mark.parametrize(
+    "typ",
+    [
+        int | list[str] | None,
+        tuple[int, int] | list[int],
+        Annotated[dict[str, int] | None, "meta"],
+    ],
+)
+def test_complex_unhashable_cases(typ):
+    assert not is_hashable(typ), (
+        f"{typ} should NOT be hashable (deep unhashable part)"
+    )
+
+
+# ==== User-defined classes ====
+
+
+class HashableCustom:
+    @override
+    def __hash__(self):
+        return 42
+
+
+class UnhashableCustom:
+    __hash__ = None  # pyright: ignore[reportAssignmentType]
+
+
+def test_custom_class_hashable():
+    assert is_hashable(HashableCustom)
+
+
+def test_custom_class_unhashable():
+    assert not is_hashable(UnhashableCustom)
+
+
+# ==== Aliased types / runtime aliases ====
+MyFrozenSet = frozenset[int]
+MyList = list[int]
+
+
+def test_alias_frozenset():
+    assert is_hashable(MyFrozenSet)
+
+
+def test_alias_list():
+    assert not is_hashable(MyList)
+
+
+# ==== Optional Ellipsis corner case ====
+def test_ellipsis_is_ignored():
+    assert is_hashable(None | tuple[int, ...])

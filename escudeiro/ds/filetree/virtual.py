@@ -8,7 +8,7 @@ from typing import Any, Self
 from escudeiro.data import data
 from escudeiro.ds.filetree.helpers import resolve_error
 from escudeiro.escudeiro_pyrs import filetree
-from escudeiro.exc.errors import FailedFileOperation, InvalidPath
+from escudeiro.exc import FailedFileOperation, InvalidPath
 from escudeiro.lazyfields import lazyfield
 
 

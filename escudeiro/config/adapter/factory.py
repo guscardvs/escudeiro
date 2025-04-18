@@ -17,9 +17,8 @@ from escudeiro.config.interface import MISSING, ConfigLike
 from escudeiro.data import data, factory
 from escudeiro.data.utils.functions import disassemble_type
 from escudeiro.data.utils.typedef import DisassembledType
-from escudeiro.exc.errors import MissingName
-from escudeiro.misc import jsonx, strings
-from escudeiro.misc.strings import make_lex_separator
+from escudeiro.exc import MissingName
+from escudeiro.misc import exclamation, jsonx, make_lex_separator
 
 from .dataclass import DataclassResolverStrategy
 from .interface import FieldResolverStrategy
@@ -37,9 +36,7 @@ def _try_each(*names: str, default: Any, cast: Any, config: ConfigLike):
     if default is not MISSING:
         return default
     raise MissingName(
-        strings.exclamation(
-            f"{', '.join(names)} not found and no default was given"
-        )
+        exclamation(f"{', '.join(names)} not found and no default was given")
     )
 
 

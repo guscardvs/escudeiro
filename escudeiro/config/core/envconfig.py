@@ -14,7 +14,7 @@ from escudeiro.config.core.utils import (
 )
 from escudeiro.config.interface import MISSING, default_cast
 from escudeiro.data import call_init, data, field
-from escudeiro.exc.errors import SquireError
+from escudeiro.exc import SquireError
 from escudeiro.lazyfields import lazyfield
 
 from .config import Config

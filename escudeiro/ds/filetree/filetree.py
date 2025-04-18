@@ -8,7 +8,7 @@ from typing import Self
 from escudeiro.data import data
 from escudeiro.ds.filetree.virtual import VirtualFileTree
 from escudeiro.escudeiro_pyrs import filetree
-from escudeiro.exc.errors import FailedFileOperation, InvalidPath
+from escudeiro.exc import FailedFileOperation, InvalidPath
 from escudeiro.lazyfields import lazyfield
 
 

@@ -2,7 +2,7 @@ from time import time
 from typing import Any, override
 
 from escudeiro.data import data
-from escudeiro.exc.errors import InvalidParamType
+from escudeiro.exc import InvalidParamType
 
 STARTTIME_ATTR = "_squire_starttime_"
 

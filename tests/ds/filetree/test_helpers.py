@@ -5,13 +5,13 @@ import pytest
 
 from escudeiro.ds.filetree.helpers import resolve_error
 from escudeiro.escudeiro_pyrs import filetree
-from escudeiro.exc.errors import (
+from escudeiro.exc import (
     DuplicateFile,
     InvalidParamType,
     InvalidPath,
     SyncError,
 )
-from escudeiro.misc.iterx import next_or
+from escudeiro.misc import next_or
 
 
 @pytest.mark.parametrize(

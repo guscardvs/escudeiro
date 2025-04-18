@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 
 from escudeiro.ds import FileTree
-from escudeiro.exc.errors import FailedFileOperation, InvalidPath
+from escudeiro.exc import FailedFileOperation, InvalidPath
 
 
 def test_write_file(tmp_path: Path):

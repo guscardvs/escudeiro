@@ -4,7 +4,7 @@ from typing import Any, ClassVar, Self
 
 from escudeiro.data import data
 from escudeiro.lazyfields import lazyfield
-from escudeiro.misc.iterx import filter_isinstance
+from escudeiro.misc import filter_isinstance
 
 
 @data

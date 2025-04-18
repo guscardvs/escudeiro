@@ -1,7 +1,7 @@
 import pathlib
 
 from escudeiro import autodiscovery
-from escudeiro.misc.iterx import filter_isinstance, filter_issubclass
+from escudeiro.misc import filter_isinstance, filter_issubclass
 
 
 def test_runtime_autodiscovery_childof(
