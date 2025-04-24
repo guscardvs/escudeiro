@@ -1,8 +1,8 @@
-from gyver.attrs import define
-from gyver.config import AdapterConfigFactory
+from escudeiro.config import AdapterConfigFactory
+from escudeiro.data import data
 
 
-@define
+@data
 class _Constants:
     xmlns: str
     config_factory: AdapterConfigFactory

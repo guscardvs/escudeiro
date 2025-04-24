@@ -1,6 +1,7 @@
 from collections.abc import Callable, Generator, Mapping
 from typing import Any
 
+from escudeiro.contrib.aws.exc import RequestFailed
 from escudeiro.contrib.aws.http.response import ResponseProxy
 from escudeiro.contrib.aws.typedef import Methods
 from escudeiro.data import data
@@ -28,6 +29,11 @@ class Opts[T]:
         if self.data:
             mapping["data"] = self.data
         return mapping
+
+
+def response_failed_handler(response: ResponseProxy):
+    if not response.ok:
+        raise RequestFailed(response)
 
 
 @data

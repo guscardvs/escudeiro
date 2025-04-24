@@ -1,4 +1,4 @@
-from escudeiro.misc import ValueEnum, SnakeEnum
+from escudeiro.misc import SnakeEnum, ValueEnum
 
 
 class Methods(ValueEnum):

@@ -68,12 +68,12 @@ class AsyncAuthHttpClient:
 
     async def iter[T](
         self, opt_generator: Generator[Opts[T], None, None]
-    ) -> AsyncGenerator[T, None]:
+    ) -> AsyncGenerator[T]:
         for item in opt_generator:
             yield await self.do(item)
 
     async def exhaust[T](
-        self, opt_generator: Generator[Opts[T], None, None]
+        self, opt_generator: Generator[Opts[T]]
     ) -> Sequence[T]:
         return [await self.do(item) for item in opt_generator]
 

@@ -1,10 +1,11 @@
+import hashlib
+import hmac
 from base64 import b64encode
 from binascii import hexlify
 from collections.abc import Mapping
 from datetime import UTC, date, datetime
 from functools import reduce
-import hashlib
-import hmac
+
 from escudeiro.contrib.aws.constants import constants
 from escudeiro.contrib.aws.credentials import Credentials
 from escudeiro.contrib.aws.typedef import Methods, Services

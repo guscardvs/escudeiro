@@ -18,8 +18,11 @@ class InvalidParam(AwsError):
 
 
 class ResponseProtocol(Protocol):
-    url: URL
-    status_code: HTTPStatus
+    @property
+    def url(self) -> URL: ...
+
+    @property
+    def status_code(self) -> HTTPStatus: ...
 
 
 class RequestFailed(AwsError):
