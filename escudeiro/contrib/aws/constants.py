@@ -1,5 +1,9 @@
+from datetime import UTC
+
 from escudeiro.config import AdapterConfigFactory
 from escudeiro.data import data
+from escudeiro.lazyfields import lazyfield
+from escudeiro.misc.timezone import TimeZone
 
 
 @data
@@ -12,6 +16,10 @@ class _Constants:
     default_encoding: str
     default_mimetype: str
     max_chunksize: int
+
+    @lazyfield
+    def timezone(self) -> TimeZone:
+        return TimeZone(UTC)
 
 
 constants = _Constants(

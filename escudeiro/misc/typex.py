@@ -1,6 +1,6 @@
 from collections.abc import Hashable
 from types import GenericAlias, UnionType
-from typing import Annotated, Any, get_args, get_origin
+from typing import Annotated, Any, TypeAliasType, get_args, get_origin
 
 from typing_extensions import TypeIs
 
@@ -8,6 +8,9 @@ from escudeiro.misc.iterx import flatten
 
 
 def is_hashable(annotation: Any) -> TypeIs[Hashable]:
+    if isinstance(annotation, TypeAliasType):
+        annotation = annotation.__value__
+
     if not isinstance(annotation, GenericAlias) and isinstance(
         annotation, type
     ):

@@ -9,8 +9,10 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
+from escudeiro.exc.errors import ErrorGroup
 from escudeiro.misc import (
     FrozenCoroutine,
+    Retry,
     as_async,
     as_async_iterable,
     as_datetime,
@@ -502,93 +504,181 @@ class TestRaiseInsteadof:
         assert x == 2
 
 
-# ==== Types that SHOULD be hashable ====
-@pytest.mark.parametrize(
-    "typ",
-    [
-        int,
-        str,
-        float,
-        bool,
-        type(None),
-        int | None,
-        int | str,
-        tuple[int, str],
-        Literal[1, 2, 3],
-        Annotated[int, "metadata"],
-        frozenset[str],
-    ],
-)
-def test_hashable_types(typ):
-    assert is_hashable(typ), f"{typ} should be hashable"
-
-
-# ==== Types that SHOULD NOT be hashable ====
-@pytest.mark.parametrize(
-    "typ",
-    [
-        list[int],
-        set[str],
-        dict[str, int],
-        list[str] | None,
-        str | list[str],
-        tuple[int, list[int]],
-        Annotated[list[int], "metadata"],
-    ],
-)
-def test_unhashable_types(typ):
-    assert not is_hashable(typ), f"{typ} should NOT be hashable"
-
-
-# ==== Edge: recursive or nested generics ====
-@pytest.mark.parametrize(
-    "typ",
-    [
-        int | list[str] | None,
-        tuple[int, int] | list[int],
-        Annotated[dict[str, int] | None, "meta"],
-    ],
-)
-def test_complex_unhashable_cases(typ):
-    assert not is_hashable(typ), (
-        f"{typ} should NOT be hashable (deep unhashable part)"
+class TestIsHashable:
+    # ==== Types that SHOULD be hashable ====
+    @pytest.mark.parametrize(
+        "typ",
+        [
+            int,
+            str,
+            float,
+            bool,
+            type(None),
+            int | None,
+            int | str,
+            tuple[int, str],
+            Literal[1, 2, 3],
+            Annotated[int, "metadata"],
+            frozenset[str],
+        ],
     )
+    def test_hashable_types(self, typ):
+        assert is_hashable(typ), f"{typ} should be hashable"
+
+    # ==== Types that SHOULD NOT be hashable ====
+    @pytest.mark.parametrize(
+        "typ",
+        [
+            list[int],
+            set[str],
+            dict[str, int],
+            list[str] | None,
+            str | list[str],
+            tuple[int, list[int]],
+            Annotated[list[int], "metadata"],
+        ],
+    )
+    def test_unhashable_types(self, typ):
+        assert not is_hashable(typ), f"{typ} should NOT be hashable"
+
+    # ==== Edge: recursive or nested generics ====
+    @pytest.mark.parametrize(
+        "typ",
+        [
+            int | list[str] | None,
+            tuple[int, int] | list[int],
+            Annotated[dict[str, int] | None, "meta"],
+        ],
+    )
+    def test_complex_unhashable_cases(self, typ):
+        assert not is_hashable(typ), (
+            f"{typ} should NOT be hashable (deep unhashable part)"
+        )
+
+    # ==== User-defined classes ====
+
+    class HashableCustom:
+        @override
+        def __hash__(self):
+            return 42
+
+    class UnhashableCustom:
+        __hash__ = None  # pyright: ignore[reportAssignmentType]
+
+    def test_custom_class_hashable(self):
+        assert is_hashable(self.HashableCustom)
+
+    def test_custom_class_unhashable(self):
+        assert not is_hashable(self.UnhashableCustom)
+
+    # ==== Aliased types / runtime aliases ====
+    MyFrozenSet = frozenset[int]
+    MyList = list[str]
+    type MyTuple = tuple[int]
+    type MyDict = dict[str, Any]
+
+    def test_alias_variable(self):
+        assert is_hashable(self.MyFrozenSet)
+        assert not is_hashable(self.MyList)
+
+    def test_type_alias_type(self):
+        assert is_hashable(self.MyTuple)
+        assert not is_hashable(self.MyDict)
+
+    # ==== Optional Ellipsis corner case ====
+    def test_ellipsis_is_ignored(self):
+        assert is_hashable(None | tuple[int, ...])
 
 
-# ==== User-defined classes ====
+# Test agenmap functionality
+class TestRetryAgenMap:
+    @pytest.mark.asyncio
+    async def test_agenmap_all_successful(self):
+        """Test agenmap with all successful operations."""
 
+        async def process(item):
+            return item * 2
 
-class HashableCustom:
-    @override
-    def __hash__(self):
-        return 42
+        async def generator():
+            for i in [1, 2, 3]:
+                yield i
 
+        retry = Retry(signal=ValueError)
 
-class UnhashableCustom:
-    __hash__ = None  # pyright: ignore[reportAssignmentType]
+        results = []
+        async for result in retry.agenmap(process, generator()):
+            results.append(result)
 
+        assert results == [2, 4, 6]
 
-def test_custom_class_hashable():
-    assert is_hashable(HashableCustom)
+    @pytest.mark.asyncio
+    async def test_agenmap_with_retries(self):
+        """Test agenmap with some retries needed."""
+        counter = 0
 
+        async def process(item):
+            nonlocal counter
+            if item == 2 and counter < 2:
+                counter += 1
+                raise ValueError("Failed processing")
+            return item * 2
 
-def test_custom_class_unhashable():
-    assert not is_hashable(UnhashableCustom)
+        async def generator():
+            for i in [1, 2, 3]:
+                yield i
 
+        retry = Retry(signal=ValueError, count=3)
 
-# ==== Aliased types / runtime aliases ====
-MyFrozenSet = frozenset[int]
-MyList = list[int]
+        results = []
+        async for result in retry.agenmap(process, generator()):
+            results.append(result)
 
+        assert results == [2, 4, 6]
+        assert counter == 2  # Process was retried twice for item 2
 
-def test_alias_frozenset():
-    assert is_hashable(MyFrozenSet)
+    @pytest.mark.asyncio
+    async def test_agenmap_exceeds_max_retries(self):
+        """Test agenmap when max retries are exceeded."""
 
+        async def process(item):
+            if item == 2:
+                raise ValueError("Failed processing")
+            return item * 2
 
-def test_alias_list():
-    assert not is_hashable(MyList)
+        async def generator():
+            for i in [1, 2, 3]:
+                yield i
 
+        retry = Retry(signal=ValueError, count=2)
 
-# ==== Optional Ellipsis corner case ====
-def test_ellipsis_is_ignored():
-    assert is_hashable(None | tuple[int, ...])
+        with pytest.raises(ErrorGroup):
+            results = []
+            async for result in retry.agenmap(process, generator()):
+                results.append(result)
+
+    @pytest.mark.asyncio
+    async def test_agenmap_temperature_strategy(self):
+        """Test agenmap with temperature strategy that reduces retry count after success."""
+        failure_counts = {2: 0, 4: 0}
+
+        async def process(item):
+            if item in [2, 4] and failure_counts[item] < 2:
+                failure_counts[item] += 1
+                raise ValueError(f"Failed processing {item}")
+            return item * 2
+
+        async def generator():
+            for i in [1, 2, 3, 4, 5]:
+                yield i
+
+        retry = Retry(signal=ValueError, count=3)
+
+        results = []
+        async for result in retry.agenmap(
+            process, generator(), strategy="temperature"
+        ):
+            results.append(result)
+
+        assert results == [2, 4, 6, 8, 10]
+        assert failure_counts[2] == 2
+        assert failure_counts[4] == 2

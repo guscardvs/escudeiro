@@ -10,9 +10,11 @@ import asyncio
 import functools
 import typing
 from collections.abc import (
+    AsyncGenerator,
     AsyncIterable,
     Awaitable,
     Callable,
+    Collection,
     Coroutine,
     Generator,
     Iterable,
@@ -22,7 +24,9 @@ from contextlib import (
     AbstractContextManager,
     contextmanager,
 )
+from dataclasses import dataclass
 from datetime import date, datetime, time, tzinfo
+from time import sleep
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -32,6 +36,7 @@ from typing import (
     overload,
 )
 
+from escudeiro.exc.errors import ErrorGroup, RetryError
 from escudeiro.misc.contextx import AsyncContextWrapper, is_async_context
 
 
@@ -508,3 +513,263 @@ def raise_insteadof(
         yield
     except insteadof:
         raise exc(*args) from None
+
+
+@dataclass
+class Retry:
+    """
+    A utility class that provides retry logic for functions.
+
+    This class allows you to retry a function multiple times in case of an exception. It supports both synchronous
+    and asynchronous functions. You can configure the number of retries, the delay between retries, and an optional
+    backoff multiplier for exponential delay growth.
+
+    Attributes:
+        signal: The exception type that triggers the retry logic.
+        count: The number of retries to attempt before giving up. Default is 3.
+        delay: The initial delay (in seconds) between retries. Default is 0.
+        backoff: The multiplier for the delay between retries (exponential backoff). Default is 1 (no backoff).
+
+    Example:
+        ```python
+        retry = Retry(signal=ConnectionError, count=5, delay=1, backoff=2)
+
+        @retry
+        def unreliable_function():
+            # Function implementation that might raise ConnectionError
+            pass
+        ```
+    """
+
+    signal: type[Exception]
+    count: int = 3
+    delay: float = 0  # seconds between retries
+    backoff: float = 1  # multiplier for delay
+
+    def __call__[**P, T](self, func: Callable[P, T]) -> Callable[P, T]:
+        """
+        Decorator that retries a function call on failure.
+
+        This method wraps the provided function, retrying it on failure for a specified number of attempts. If the
+        function raises the exception specified by `signal`, it will retry the function call up to the `count`
+        number of times, with a delay between each retry and optional exponential backoff.
+
+        Args:
+            func: The function to be wrapped with retry logic.
+
+        Returns:
+            A wrapped function that will retry on failure.
+
+        Example:
+            ```python
+            @retry
+            def fetch_data():
+                # Function that might raise a ConnectionError
+                pass
+            ```
+        """
+
+        @functools.wraps(func)
+        def retrier(*args: P.args, **kwargs: P.kwargs) -> T:
+            fails = []
+            current_delay = self.delay
+            for attempt in range(self.count):
+                try:
+                    return func(*args, **kwargs)
+                except self.signal as e:
+                    fails.append(e)
+                    if attempt < self.count - 1 and current_delay > 0:
+                        sleep(current_delay)
+                        current_delay *= self.backoff
+            raise ErrorGroup(
+                "Failed retry operation",
+                (RetryError(f"Exceeded max retries: {self.count}"), *fails),
+            )
+
+        return retrier
+
+    def acall[**P, T](
+        self, func: Callable[P, Coroutine[Any, Any, T]]
+    ) -> Callable[P, Coroutine[Any, Any, T]]:
+        """
+        Asynchronous version of the retry decorator for functions that return coroutines.
+
+        This method wraps the provided asynchronous function, retrying it on failure for a specified number of
+        attempts. If the function raises the exception specified by `signal`, it will retry the function call
+        up to the `count` number of times, with a delay between each retry and optional exponential backoff.
+
+        Args:
+            func: The asynchronous function to be wrapped with retry logic.
+
+        Returns:
+            A wrapped asynchronous function that will retry on failure.
+
+        Example:
+            ```python
+            @retry.acall
+            async def fetch_data():
+                # Async function that might raise a ConnectionError
+                pass
+            ```
+        """
+
+        @functools.wraps(func)
+        async def retrier(*args: P.args, **kwargs: P.kwargs) -> T:
+            fails = []
+            current_delay = self.delay
+            for attempt in range(self.count):
+                try:
+                    return await func(*args, **kwargs)
+                except self.signal as e:
+                    fails.append(e)
+                    if attempt < self.count - 1 and current_delay > 0:
+                        await asyncio.sleep(current_delay)
+                        current_delay *= self.backoff
+            raise ErrorGroup(
+                "Failed retry operation",
+                (RetryError(f"Exceeded max retries: {self.count}"), *fails),
+            )
+
+        return retrier
+
+    def map[S, T](
+        self,
+        predicate: Callable[[S], T],
+        collection: Collection[S],
+        strategy: Literal["threshold", "temperature"] = "threshold",
+    ) -> Iterable[T]:
+        """
+        Applies the retry logic to each item in a collection.
+
+        This method attempts to apply the given predicate function to each item in the collection. If an exception
+        occurs during the execution of the predicate, it will retry the operation up to the `count` number of times,
+        with a delay between retries. You can control the retry strategy with the `strategy` parameter.
+
+        Args:
+            predicate: The function to apply to each item in the collection.
+            collection: The collection of items to iterate over and apply the predicate to.
+            strategy: The retry strategy to use. "threshold" retries a fixed number of times, while "temperature"
+                      decreases the retry count with each successful operation. Default is "threshold".
+
+        Returns:
+            An iterable of the results of the predicate applied to each item in the collection.
+
+        Example:
+            ```python
+            retry.map(fetch_data, [item1, item2])
+            ```
+        """
+        count = 0
+        predicate = self(predicate)
+        for item in collection:
+            try:
+                yield predicate(item)
+            except self.signal as err:
+                if count >= self.count:
+                    raise ErrorGroup(
+                        "Failed retry operation",
+                        (
+                            RetryError(f"Exceeded max retries: {self.count}"),
+                            err,
+                        ),
+                    ) from err
+                count += 1
+            else:
+                if strategy == "temperature":
+                    count = max(0, count - 1)
+
+    async def amap[S, T](
+        self,
+        predicate: Callable[[S], Coroutine[Any, Any, T]],
+        collection: Collection[S],
+        strategy: Literal["threshold", "temperature"] = "threshold",
+    ) -> AsyncIterable[T]:
+        """
+        Asynchronous version of `map` for a collection of items, using coroutines for the predicate.
+
+        This method attempts to apply the given asynchronous predicate function to each item in the collection.
+        If an exception occurs during the execution of the predicate, it will retry the operation up to the `count`
+        number of times, with a delay between retries. The retry strategy can be controlled using the `strategy`
+        parameter.
+
+        Args:
+            predicate: The asynchronous function to apply to each item in the collection.
+            collection: The collection of items to iterate over and apply the predicate to.
+            strategy: The retry strategy to use. "threshold" retries a fixed number of times, while "temperature"
+                      decreases the retry count with each successful operation. Default is "threshold".
+
+        Returns:
+            An asynchronous iterable of the results of the predicate applied to each item in the collection.
+
+        Example:
+            ```python
+            async for result in retry.amap(fetch_data, [item1, item2]):
+                print(result)
+            ```
+        """
+        count = 0
+        predicate = self.acall(predicate)
+        for item in collection:
+            try:
+                yield await predicate(item)
+            except self.signal as err:
+                if count >= self.count:
+                    raise ErrorGroup(
+                        "Failed retry operation",
+                        (
+                            RetryError(f"Exceeded max retries: {self.count}"),
+                            err,
+                        ),
+                    ) from err
+                count += 1
+            else:
+                if strategy == "temperature":
+                    count = max(0, count - 1)
+
+    async def agenmap[S, T](
+        self,
+        predicate: Callable[[S], Coroutine[Any, Any, T]],
+        collection: AsyncGenerator[S],
+        strategy: Literal["threshold", "temperature"] = "threshold",
+    ) -> AsyncIterable[T]:
+        """
+        Asynchronously applies retry logic to each item generated by the given asynchronous generator.
+
+        This method applies the given asynchronous predicate function to each item generated by the asynchronous
+        generator. If an exception occurs during the execution of the predicate, it will retry the operation up to
+        the `count` number of times, with a delay between retries. The retry strategy can be controlled using the
+        `strategy` parameter.
+
+        Args:
+            predicate: The asynchronous function to apply to each item from the generator.
+            collection: The asynchronous generator of items to iterate over and apply the predicate to.
+            strategy: The retry strategy to use. "threshold" retries a fixed number of times, while "temperature"
+                        decreases the retry count with each successful operation. Default is "threshold".
+
+        Returns:
+            An asynchronous iterable of the results of the predicate applied to each item from the generator.
+
+        Example:
+            ```python
+            async for result in retry.agenmap(fetch_data, async_item_generator()):
+                print(result)
+            ```
+        """
+        count = 0
+        predicate = self.acall(predicate)
+        async for item in collection:
+            try:
+                yield await predicate(item)
+            except self.signal as err:
+                if count >= self.count:
+                    raise ErrorGroup(
+                        "Failed retry operation",
+                        (
+                            RetryError(f"Exceeded max retries: {self.count}"),
+                            err,
+                        ),
+                    ) from err
+                count += 1
+            else:
+                if strategy == "temperature":
+                    count = max(0, count - 1)

@@ -1,7 +1,7 @@
 from collections.abc import Generator, Sequence
 from typing import Any, override
 
-from attr._make import Factory  # pyright: ignore[reportPrivateImportUsage]
+from attr._make import Factory
 from attrs import NOTHING, Attribute, fields
 
 from escudeiro.config.adapter.interface import FieldResolverStrategy

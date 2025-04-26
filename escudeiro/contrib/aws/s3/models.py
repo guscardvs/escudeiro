@@ -1,8 +1,8 @@
 from datetime import datetime
-from typing import NotRequired, TypedDict
+from typing import NamedTuple, NotRequired, TypedDict, override
 
-from escudeiro.contrib.aws.model import AwsModel
-from escudeiro.misc import ValueEnum
+from escudeiro.data import data
+from escudeiro.misc import ValueEnum, to_pascal
 
 UploadParams = TypedDict(
     "UploadParams",
@@ -31,10 +31,35 @@ class StorageClass(ValueEnum):
     GLACIER_IR = "GLACIER_IR"
     UNKNOWN = "UNKNOWN"
 
+    @classmethod
+    @override
+    def _missing_(cls, value: object) -> "StorageClass":
+        found = super()._missing_(value)
+        if found is not None:
+            return found
+        return cls.UNKNOWN
 
-class FileInfo(AwsModel):
+
+@data(alias_generator=to_pascal)
+class FileInfo:
     key: str
     last_modified: datetime
     size: int
     e_tag: str
     storage_class: StorageClass
+
+
+class ObjectTuple(NamedTuple):
+    object_name: str
+    version: str | None = None
+
+
+class CopyParams(NamedTuple):
+    object_name: str
+    bucket: str
+
+
+@data(frozen=False)
+class TokenHolder:
+    continuation_token: str | None = None
+    should_break: bool = False

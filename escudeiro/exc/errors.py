@@ -73,3 +73,7 @@ class SyncError(SquireError, ValueError):
 
 class DuplicateFile(SquireError, ValueError):
     """Raised when trying to write a file that already exists"""
+
+
+class RetryError(SquireError):
+    """Raised when a retry operation failed."""
