@@ -134,3 +134,39 @@ class URL(Wrapped[url.URL]):
 
     def encode(self, append_empty_equal: bool = True) -> str:
         return self.internal.encode(append_empty_equal)
+
+    def copy_add(
+        self,
+        path: str | None = None,
+        query: Mapping[str, str] | None = None,
+        fragment: str | None = None,
+        netloc: str | None = None,
+        netloc_obj: Netloc | None = None,
+        scheme: str | None = None,
+    ) -> Self:
+        return self.copy().add(
+            path,
+            query,
+            fragment,
+            netloc,
+            netloc_obj,
+            scheme,
+        )
+
+    def copy_set(
+        self,
+        path: str | None = None,
+        query: Mapping[str, str] | None = None,
+        fragment: str | None = None,
+        netloc: str | None = None,
+        netloc_obj: Netloc | None = None,
+        scheme: str | None = None,
+    ) -> Self:
+        return self.copy().set(
+            path,
+            query,
+            fragment,
+            netloc,
+            netloc_obj,
+            scheme,
+        )

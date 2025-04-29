@@ -9,6 +9,7 @@ from escudeiro.exc.errors import (
     InvalidPath,
     KeyAlreadyRead,
     MissingName,
+    RetryError,
     SquireError,
     StrictCast,
     SyncError,
@@ -28,4 +29,5 @@ __all__ = [
     "InvalidPath",
     "SyncError",
     "DuplicateFile",
+    "RetryError",
 ]

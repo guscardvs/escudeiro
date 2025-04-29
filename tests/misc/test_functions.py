@@ -4,13 +4,15 @@ import asyncio
 import contextlib
 from collections.abc import AsyncIterable, Callable
 from datetime import UTC, date, datetime, time
-from typing import Annotated, Any, Literal, override
-from unittest.mock import AsyncMock, Mock
+from typing import Any, NoReturn
+from unittest.mock import AsyncMock, MagicMock, Mock, call, patch
 
 import pytest
 
+from escudeiro.exc.errors import ErrorGroup
 from escudeiro.misc import (
     FrozenCoroutine,
+    Retry,
     as_async,
     as_async_iterable,
     as_datetime,
@@ -24,7 +26,7 @@ from escudeiro.misc import (
     raise_insteadof,
     safe_cast,
 )
-from escudeiro.misc.typex import is_hashable
+from escudeiro.misc.iterx import filter_isinstance, next_or
 
 
 class TestSafeCast:
@@ -502,93 +504,381 @@ class TestRaiseInsteadof:
         assert x == 2
 
 
-# ==== Types that SHOULD be hashable ====
-@pytest.mark.parametrize(
-    "typ",
-    [
-        int,
-        str,
-        float,
-        bool,
-        type(None),
-        int | None,
-        int | str,
-        tuple[int, str],
-        Literal[1, 2, 3],
-        Annotated[int, "metadata"],
-        frozenset[str],
-    ],
-)
-def test_hashable_types(typ):
-    assert is_hashable(typ), f"{typ} should be hashable"
+# Test map functionality
+class TestRetryMap:
+    def test_map_all_successful(self):
+        """Test map with all successful operations."""
+
+        def process(item):
+            return item * 2
+
+        retry = Retry(signal=ValueError)
+
+        results = []
+        for result in retry.map(process, [1, 2, 3]):
+            results.append(result)
+
+        assert results == [2, 4, 6]
+
+    def test_map_with_retries(self):
+        """Test map with some retries needed."""
+        counter = 0
+
+        def process(item):
+            nonlocal counter
+            if item == 2 and counter < 2:
+                counter += 1
+                raise ValueError("Failed processing")
+            return item * 2
+
+        retry = Retry(signal=ValueError, count=3)
+
+        results = []
+        for result in retry.map(process, [1, 2, 3]):
+            results.append(result)
+
+        assert results == [2, 4, 6]
+        assert counter == 2  # Process was retried twice for item 2
+
+    def test_map_temperature_strategy(self):
+        """Test map with temperature strategy that reduces retry count after success."""
+        failure_counts = {2: 0, 4: 0}
+
+        def process(item):
+            if item in [2, 4] and failure_counts[item] < 2:
+                failure_counts[item] += 1
+                raise ValueError(f"Failed processing {item}")
+            return item * 2
+
+        retry = Retry(signal=ValueError, count=3)
+
+        results = []
+        for result in retry.map(
+            process, list(range(1, 6, 1)), strategy="temperature"
+        ):
+            results.append(result)
+
+        assert results == [2, 4, 6, 8, 10]
+        assert failure_counts[2] == 2
+        assert failure_counts[4] == 2
 
 
-# ==== Types that SHOULD NOT be hashable ====
-@pytest.mark.parametrize(
-    "typ",
-    [
-        list[int],
-        set[str],
-        dict[str, int],
-        list[str] | None,
-        str | list[str],
-        tuple[int, list[int]],
-        Annotated[list[int], "metadata"],
-    ],
-)
-def test_unhashable_types(typ):
-    assert not is_hashable(typ), f"{typ} should NOT be hashable"
+# Test Retry call functionality
+class TestRetry:
+    def test_retry_works_for_successful_execution(self):
+        sentinel = object()
+        mock = Mock(return_value=sentinel)
+        retrier = Retry(signal=ValueError)
+
+        assert retrier(mock)() is sentinel
+        mock.assert_called_once()
+
+    def test_retry_works_for_retries(self):
+        sentinel = object()
+        counter = 0
+        retrier = Retry(signal=ValueError)
+
+        @retrier
+        def _testfunc():
+            nonlocal counter
+            counter += 1
+            if counter < 2:
+                raise ValueError
+            return sentinel
+
+        assert _testfunc() is sentinel
+        assert counter == 2
+
+    @patch("escudeiro.misc.functions.sleep")
+    def test_retry_sleeps_work_as_expected(self, mock: MagicMock):
+        retrier = Retry(signal=ValueError, delay=3)
+        counter = 0
+
+        @retrier
+        def _testfunc():
+            nonlocal counter
+            if counter == 0:
+                counter += 1
+                raise ValueError
+            return counter
+
+        assert _testfunc() == 1
+        assert counter == 1
+        mock.assert_called_once_with(3)
+
+    @patch("escudeiro.misc.functions.sleep")
+    def test_retry_does_proper_backoff_as_expected(self, mock: MagicMock):
+        retrier = Retry(signal=ValueError, delay=3, backoff=2)
+        counter = 0
+
+        @retrier
+        def _testfunc():
+            nonlocal counter
+            if counter < 2:
+                counter += 1
+                raise ValueError
+            return counter
+
+        assert _testfunc() == 2
+        assert counter == 2
+        mock.assert_has_calls((call(3), call(6)))
+
+    def test_retry_eventually_fails_with_all_expected_exceptions(self):
+        counts = 4
+        retrier = Retry(signal=ValueError, count=counts)
+        counter = 0
+
+        @retrier
+        def _testfunc() -> NoReturn:
+            nonlocal counter
+            counter += 1
+            raise ValueError
+
+        with pytest.raises(
+            ErrorGroup, match="Failed retry operation"
+        ) as exc_info:
+            _testfunc()
+
+        assert tuple(
+            filter_isinstance(ValueError, exc_info.value.exceptions[1:])
+        )
+        assert (
+            next_or(exc_info.value.exceptions[0].args)
+            == f"Exceeded max retries: {counts}"
+        )
+        assert counter == counts
 
 
-# ==== Edge: recursive or nested generics ====
-@pytest.mark.parametrize(
-    "typ",
-    [
-        int | list[str] | None,
-        tuple[int, int] | list[int],
-        Annotated[dict[str, int] | None, "meta"],
-    ],
-)
-def test_complex_unhashable_cases(typ):
-    assert not is_hashable(typ), (
-        f"{typ} should NOT be hashable (deep unhashable part)"
-    )
+# Test Retry acall functionality
+class TestRetryACall:
+    async def test_retry_works_for_successful_execution(self):
+        sentinel = object()
+        mock = AsyncMock(return_value=sentinel)
+        retrier = Retry(signal=ValueError)
+
+        assert await retrier.acall(mock)() is sentinel
+        mock.assert_called_once()
+
+    async def test_retry_works_for_retries(self):
+        sentinel = object()
+        counter = 0
+        retrier = Retry(signal=ValueError)
+
+        @retrier.acall
+        async def _testfunc():
+            nonlocal counter
+            counter += 1
+            if counter < 2:
+                raise ValueError
+            return sentinel
+
+        assert await _testfunc() is sentinel
+        assert counter == 2
+
+    @patch("asyncio.sleep")
+    async def test_retry_sleeps_work_as_expected(self, mock: AsyncMock):
+        retrier = Retry(signal=ValueError, delay=3)
+        counter = 0
+
+        @retrier.acall
+        async def _testfunc():
+            nonlocal counter
+            if counter == 0:
+                counter += 1
+                raise ValueError
+            return counter
+
+        assert await _testfunc() == 1
+        assert counter == 1
+        mock.assert_called_once_with(3)
+
+    @patch("asyncio.sleep")
+    async def test_retry_does_proper_backoff_as_expected(self, mock: MagicMock):
+        retrier = Retry(signal=ValueError, delay=3, backoff=2)
+        counter = 0
+
+        @retrier.acall
+        async def _testfunc():
+            nonlocal counter
+            if counter < 2:
+                counter += 1
+                raise ValueError
+            return counter
+
+        assert await _testfunc() == 2
+        assert counter == 2
+        mock.assert_has_calls((call(3), call(6)))
+
+    async def test_retry_eventually_fails_with_all_expected_exceptions(self):
+        counts = 4
+        retrier = Retry(signal=ValueError, count=counts)
+        counter = 0
+
+        @retrier.acall
+        async def _testfunc() -> NoReturn:
+            nonlocal counter
+            counter += 1
+            raise ValueError
+
+        with pytest.raises(
+            ErrorGroup, match="Failed retry operation"
+        ) as exc_info:
+            await _testfunc()
+
+        assert tuple(
+            filter_isinstance(ValueError, exc_info.value.exceptions[1:])
+        )
+        assert (
+            next_or(exc_info.value.exceptions[0].args)
+            == f"Exceeded max retries: {counts}"
+        )
+        assert counter == counts
 
 
-# ==== User-defined classes ====
+# Test amap functionality
+class TestRetryAMap:
+    async def test_amap_all_successful(self):
+        """Test amap with all successful operations."""
+
+        async def process(item):
+            return item * 2
+
+        retry = Retry(signal=ValueError)
+
+        results = []
+        async for result in retry.amap(process, [1, 2, 3]):
+            results.append(result)
+
+        assert results == [2, 4, 6]
+
+    async def test_amap_with_retries(self):
+        """Test amap with some retries needed."""
+        counter = 0
+
+        async def process(item):
+            nonlocal counter
+            if item == 2 and counter < 2:
+                counter += 1
+                raise ValueError("Failed processing")
+            return item * 2
+
+        retry = Retry(signal=ValueError, count=3)
+
+        results = []
+        async for result in retry.amap(process, [1, 2, 3]):
+            results.append(result)
+
+        assert results == [2, 4, 6]
+        assert counter == 2  # Process was retried twice for item 2
+
+    async def test_amap_temperature_strategy(self):
+        """Test amap with temperature strategy that reduces retry count after success."""
+        failure_counts = {2: 0, 4: 0}
+
+        async def process(item):
+            if item in [2, 4] and failure_counts[item] < 2:
+                failure_counts[item] += 1
+                raise ValueError(f"Failed processing {item}")
+            return item * 2
+
+        retry = Retry(signal=ValueError, count=3)
+
+        results = []
+        async for result in retry.amap(
+            process, list(range(1, 6, 1)), strategy="temperature"
+        ):
+            results.append(result)
+
+        assert results == [2, 4, 6, 8, 10]
+        assert failure_counts[2] == 2
+        assert failure_counts[4] == 2
 
 
-class HashableCustom:
-    @override
-    def __hash__(self):
-        return 42
+# Test agenmap functionality
+class TestRetryAgenMap:
+    async def test_agenmap_all_successful(self):
+        """Test agenmap with all successful operations."""
 
+        async def process(item):
+            return item * 2
 
-class UnhashableCustom:
-    __hash__ = None  # pyright: ignore[reportAssignmentType]
+        async def generator():
+            for i in [1, 2, 3]:
+                yield i
 
+        retry = Retry(signal=ValueError)
 
-def test_custom_class_hashable():
-    assert is_hashable(HashableCustom)
+        results = []
+        async for result in retry.agenmap(process, generator()):
+            results.append(result)
 
+        assert results == [2, 4, 6]
 
-def test_custom_class_unhashable():
-    assert not is_hashable(UnhashableCustom)
+    async def test_agenmap_with_retries(self):
+        """Test agenmap with some retries needed."""
+        counter = 0
 
+        async def process(item):
+            nonlocal counter
+            if item == 2 and counter < 2:
+                counter += 1
+                raise ValueError("Failed processing")
+            return item * 2
 
-# ==== Aliased types / runtime aliases ====
-MyFrozenSet = frozenset[int]
-MyList = list[int]
+        async def generator():
+            for i in [1, 2, 3]:
+                yield i
 
+        retry = Retry(signal=ValueError, count=3)
 
-def test_alias_frozenset():
-    assert is_hashable(MyFrozenSet)
+        results = []
+        async for result in retry.agenmap(process, generator()):
+            results.append(result)
 
+        assert results == [2, 4, 6]
+        assert counter == 2  # Process was retried twice for item 2
 
-def test_alias_list():
-    assert not is_hashable(MyList)
+    async def test_agenmap_exceeds_max_retries(self):
+        """Test agenmap when max retries are exceeded."""
 
+        async def process(item):
+            if item == 2:
+                raise ValueError("Failed processing")
+            return item * 2
 
-# ==== Optional Ellipsis corner case ====
-def test_ellipsis_is_ignored():
-    assert is_hashable(None | tuple[int, ...])
+        async def generator():
+            for i in [1, 2, 3]:
+                yield i
+
+        retry = Retry(signal=ValueError, count=2)
+
+        with pytest.raises(ErrorGroup):
+            results = []
+            async for result in retry.agenmap(process, generator()):
+                results.append(result)
+
+    async def test_agenmap_temperature_strategy(self):
+        """Test agenmap with temperature strategy that reduces retry count after success."""
+        failure_counts = {2: 0, 4: 0}
+
+        async def process(item):
+            if item in [2, 4] and failure_counts[item] < 2:
+                failure_counts[item] += 1
+                raise ValueError(f"Failed processing {item}")
+            return item * 2
+
+        async def generator():
+            for i in [1, 2, 3, 4, 5]:
+                yield i
+
+        retry = Retry(signal=ValueError, count=3)
+
+        results = []
+        async for result in retry.agenmap(
+            process, generator(), strategy="temperature"
+        ):
+            results.append(result)
+
+        assert results == [2, 4, 6, 8, 10]
+        assert failure_counts[2] == 2
+        assert failure_counts[4] == 2

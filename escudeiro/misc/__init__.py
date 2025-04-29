@@ -11,6 +11,7 @@ from escudeiro.misc.enumsx import (
 )
 from escudeiro.misc.functions import (
     FrozenCoroutine,
+    Retry,
     as_async,
     as_async_iterable,
     as_datetime,
@@ -135,4 +136,5 @@ __all__ = [
     "to_snake",
     "today",
     "wrap",
+    "Retry",
 ]
