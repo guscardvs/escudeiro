@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, Mock, call, patch
 
 import pytest
 
-from escudeiro.exc.errors import ErrorGroup
+from escudeiro.exc.errors import ErrorGroup, RetryError
 from escudeiro.misc import (
     FrozenCoroutine,
     Retry,
@@ -520,6 +520,27 @@ class TestRetryMap:
 
         assert results == [2, 4, 6]
 
+    def test_map_retries_exhausted(self):
+        """Test map where retries for each item are exhausted.
+
+        The always_fail function always raises an error, and after exhausting the retry attempts,
+        an ErrorGroup with a RetryError and the underlying exceptions is expected.
+        """
+
+        def always_fail(item):
+            raise ValueError(f"Failed processing {item}")
+
+        retry = Retry(signal=ValueError, count=2)
+
+        with pytest.raises(ErrorGroup) as excinfo:
+            # Collecting results will trigger the retries and eventual failure
+            _ = list(retry.map(always_fail, [1, 2, 3]))
+
+        error_group = excinfo.value
+        assert any(
+            isinstance(err, RetryError) for err in error_group.exceptions
+        ), "Expected at least one RetryError in the ErrorGroup"
+
     def test_map_with_retries(self):
         """Test map with some retries needed."""
         counter = 0
@@ -554,7 +575,7 @@ class TestRetryMap:
 
         results = []
         for result in retry.map(
-            process, list(range(1, 6, 1)), strategy="temperature"
+            process, list(range(1, 6)), strategy="temperature"
         ):
             results.append(result)
 
@@ -648,6 +669,22 @@ class TestRetry:
         )
         assert counter == counts
 
+    def test_retry_does_not_interfere_with_unhandled_exceptions(self):
+        retrier = Retry(signal=ValueError)
+
+        counter = 0
+
+        @retrier
+        def _testfunc():
+            nonlocal counter
+            counter += 1
+            raise KeyError("this is a test.")
+
+        with pytest.raises(KeyError, match="this is a test."):
+            _testfunc()
+
+        assert counter == 1
+
 
 # Test Retry acall functionality
 class TestRetryACall:
@@ -734,6 +771,24 @@ class TestRetryACall:
         )
         assert counter == counts
 
+    async def test_retry_acall_does_not_interfere_with_unhandled_exceptions(
+        self,
+    ):
+        retrier = Retry(signal=ValueError)
+
+        counter = 0
+
+        @retrier.acall
+        async def _testfunc():
+            nonlocal counter
+            counter += 1
+            raise KeyError("this is a test.")
+
+        with pytest.raises(KeyError, match="this is a test."):
+            await _testfunc()
+
+        assert counter == 1
+
 
 # Test amap functionality
 class TestRetryAMap:
@@ -750,6 +805,22 @@ class TestRetryAMap:
             results.append(result)
 
         assert results == [2, 4, 6]
+
+    async def test_amap_retries_exhausted(self):
+        """Test amap where an item's async predicate fails more than retry.count times."""
+
+        async def failing_process(_: int):
+            raise ValueError("processing failed")
+
+        # Set retry count to 3 for this test
+        retry = Retry(signal=ValueError, count=3)
+
+        with pytest.raises(ErrorGroup) as exc_info:
+            async for _ in retry.amap(failing_process, [42]):
+                pass
+        # Assert that one of the error messages indicates that max retries were exceeded.
+        error_messages = [str(e) for e in exc_info.value.exceptions]
+        assert any("Exceeded max retries:" in msg for msg in error_messages)
 
     async def test_amap_with_retries(self):
         """Test amap with some retries needed."""
@@ -785,7 +856,7 @@ class TestRetryAMap:
 
         results = []
         async for result in retry.amap(
-            process, list(range(1, 6, 1)), strategy="temperature"
+            process, list(range(1, 6)), strategy="temperature"
         ):
             results.append(result)
 
