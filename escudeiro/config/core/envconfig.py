@@ -200,7 +200,6 @@ class EnvConfig(Config):
         if not self.env:
             return None
         for dot in sorted(self.dotfiles, reverse=True):
-            print(dot, self.env, dot >= self.env, os.path.isfile(dot.filename))
             if not dot >= self.env:
                 break
             if dot.env is not self.env and not (

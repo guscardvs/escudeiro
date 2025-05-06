@@ -5,3 +5,10 @@ setup:
 
 test:
 	@tox p
+
+clean:
+	@rm -rf ./target
+
+build: clean
+	@bash ./build.sh
+
