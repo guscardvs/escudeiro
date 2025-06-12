@@ -25,6 +25,7 @@ from escudeiro.misc import (
     make_noop,
     raise_insteadof,
     safe_cast,
+    walk_object,
 )
 from escudeiro.misc.iterx import filter_isinstance, next_or
 
@@ -953,3 +954,57 @@ class TestRetryAgenMap:
         assert results == [2, 4, 6, 8, 10]
         assert failure_counts[2] == 2
         assert failure_counts[4] == 2
+
+
+# ...existing code...
+
+class TestWalkObject:
+    def test_walk_object_with_dict(self):
+        data = {"a": {"b": {"c": 42}}}
+        assert walk_object(data, "a.b.c") == 42
+
+    def test_walk_object_with_missing_key(self):
+        data = {"a": {"b": {}}}
+        assert walk_object(data, "a.b.c") is None
+
+    def test_walk_object_with_object_attributes(self):
+        class Dummy:
+            def __init__(self):
+                self.x = 10
+                self.child = type("Child", (), {"y": 20})()
+        obj = Dummy()
+        assert walk_object(obj, "x") == 10
+        assert walk_object(obj, "child.y") == 20
+
+    def test_walk_object_with_list_index(self):
+        data = [1, 2, [3, 4, 5]]
+        assert walk_object(data, "[2].[1]") == 4
+
+    def test_walk_object_with_tuple_index(self):
+        data = (1, 2, (3, 4, 5))
+        assert walk_object(data, "[2].[2]") == 5
+
+    def test_walk_object_with_dict_and_list(self):
+        data = {"a": [0, {"b": 99}]}
+        assert walk_object(data, "a.[1].b") == 99
+
+    def test_walk_object_returns_none_for_out_of_range_index(self):
+        data = [1, 2]
+        assert walk_object(data, "[5]") is None
+
+    def test_walk_object_returns_none_for_missing_attribute(self):
+        class Dummy:
+            pass
+        obj = Dummy()
+        assert walk_object(obj, "not_found") is None
+
+    def test_walk_object_returns_none_for_none_in_path(self):
+        data = {"a": None}
+        assert walk_object(data, "a.b") is None
+
+    def test_walk_object_with_mixed_path(self):
+        class Dummy:
+            def __init__(self):
+                self.x = [{"y": 123}]
+        obj = Dummy()
+        assert walk_object(obj, "x.[0].y") == 123

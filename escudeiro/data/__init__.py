@@ -1,3 +1,9 @@
+from .converters import (
+    asdict,
+    asjson,
+    fromdict,
+    fromjson,
+)
 from .field_ import field, private
 from .helpers import (
     call_init,
@@ -27,4 +33,8 @@ __all__ = [
     "init_hooks",
     "update_refs",
     "resolve_typevars",
+    "fromdict",
+    "asdict",
+    "fromjson",
+    "asjson",
 ]

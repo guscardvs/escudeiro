@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import functools
+import re
 import typing
 from collections.abc import (
     AsyncGenerator,
@@ -757,3 +758,45 @@ class Retry:
             else:
                 if strategy == "temperature":
                     count = max(0, count - 1)
+
+UNSET = object()
+_index_pattern = re.compile(r"\[([0-9]+)\]")
+
+def walk_object(obj: Any, path: str) -> Any:
+    """Safely retrieves a value from an object using a dot-separated path.
+    This function allows you to access nested attributes, dictionary keys, or sequence indices
+    in a safe manner, returning None if any part of the path is not found.
+    Args:
+        obj: The object to traverse.
+    Returns:
+        The value at the specified path, or None if the path does not exist.
+    Example:
+        ```python
+        class User:
+            def __init__(self, name, age):
+                self.name = name
+                self.age = age
+        user = User("Alice", 30)
+        age = walk_object(user, "age")  # Returns 30
+        nested_dict = {"user": {"name": "Bob", "details": {"age": 25}}}
+        name = walk_object(nested_dict, "user.name")  # Returns "Bob"
+        invalid = walk_object(nested_dict, "user.details.address")  # Returns None
+        nested_list = [1, 2, [3, 4, 5]]
+        value = walk_object(nested_list, "[2].[1]")  # Returns 4
+        ```
+    """
+    parts = path.split(".")
+    value = obj
+    for part in parts:
+        if v:=_index_pattern.match(part):
+            idx = int(v.group(1))
+            if TYPE_CHECKING:
+                assert isinstance(value, list | tuple), "Expected a list or tuple"
+            value = value[idx] if len(value) > idx else UNSET
+        elif isinstance(value, dict):
+            value = value.get(part, UNSET)
+        else:
+            value = getattr(value, part, UNSET)
+        if value in (None, UNSET):
+            break
+    return value if value is not UNSET else None

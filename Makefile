@@ -1,7 +1,7 @@
 .PHONY: test setup
 
 setup:
-	bash ./setup-venv.sh
+	uv sync --all-extras
 
 test:
 	@tox p

@@ -9,14 +9,9 @@ targets=(
 for target in "${targets[@]}"; do
     for version in "${versions[@]}"; do
         (
-            venv_name="/tmp/venv${version}"
-            rm -rf "$venv_name"
-            virtualenv -p "$(hatch python find "${version}")" "$venv_name"
-            "$venv_name/bin/pip" install maturin[patchelf]
-
             for build in "${compat[@]}"; do
                 echo "${version} - ${build};"
-                "$venv_name/bin/maturin" build \
+                uv run --python "${version}" maturin build \
                     --release \
                     --target "$target" \
                     --interpreter "$venv_name/bin/python" \
@@ -24,7 +19,7 @@ for target in "${targets[@]}"; do
                     --zig
             done
 
-            "$venv_name/bin/maturin" build \
+            uv run --python "${version}" maturin build \
                 --target "$target" \
                 --interpreter "$venv_name/bin/python" \
                 --release \
