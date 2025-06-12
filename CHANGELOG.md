@@ -1,3 +1,9 @@
+## 0.2.4 (2025-06-12)
+
+### Fix
+
+- **tests/misc-functions**: add function walk_object and change build framework to use uv
+
 ## 0.2.3 (2025-05-06)
 
 ### Fix
