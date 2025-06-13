@@ -37,14 +37,14 @@ WORKDIR /escudeiro
 COPY . .
 
 
-CMD set -e; \
+CMD ["sh", "-c", "set -e; \
     python -m venv $VENV_PATH; \
     pip install maturin[patchelf]; \
-    echo "Python version: $PYVER"; \
+    echo \"Python version: $PYVER\"; \
     maturin build \
         --release \
         --target x86_64-unknown-linux-musl \
         --interpreter python${PYVER} \
         --compatibility musllinux_1_1 \
         --zig; \
-    cp -r target/wheels/* $TARGET_DIR/
+    cp -r target/wheels/* $TARGET_DIR/"]

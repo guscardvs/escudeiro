@@ -11,17 +11,15 @@ for target in "${targets[@]}"; do
         (
             for build in "${compat[@]}"; do
                 echo "${version} - ${build};"
-                uv run --python "${version}" maturin build \
+                uv run --isolated --python "${version}" maturin build \
                     --release \
                     --target "$target" \
-                    --interpreter "$venv_name/bin/python" \
                     --compatibility "$build" \
                     --zig
             done
 
-            uv run --python "${version}" maturin build \
+            uv run --isolated --python "${version}" maturin build \
                 --target "$target" \
-                --interpreter "$venv_name/bin/python" \
                 --release \
                 --sdist
         ) &
