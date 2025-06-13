@@ -1,0 +1,51 @@
+site_name: Escudeiro
+theme:
+  name: material
+  features:
+    - navigation.tabs
+    - navigation.top
+    - content.code.copy
+    - content.code.annotate
+    - content.action.edit
+repo_url: https://github.com/guscardvs/escudeiro
+repo_name: guscardvs/escudeiro
+nav:
+  - Home: index.md
+  - Changelog: CHANGELOG.md
+  - License: LICENSE.md
+  - Features:
+      - Lazy Fields: features/lazyfields.md
+      - URL Utilities: features/url.md
+      - Miscellaneous:
+        - Context Utilities: features/misc/context.md
+        - Enum Utilities: features/misc/enums.md
+        - Useful functions: features/misc/functions.md
+        - Iterables and Sequences: features/misc/iter.md
+        - JSON Utilities: features/misc/json.md
+        - Lazy Methods: features/misc/lazy.md
+        - String Utilities: features/misc/strings.md
+        - Timezone Utilities: features/misc/timezone.md
+        - Type Utilities: features/misc/type.md
+      - Datastructures:
+        - Worker: features/datastructures/worker.md
+        - Scheduler: features/datastructures/scheduler.md
+        - Task Manager: features/datastructures/manager.md
+        - Circuit Breaker: features/datastructures/circuit.md
+        - Pools: features/datastructures/pools.md
+        - Filetree: features/datastructures/filetree.md
+      - Data Classes: features/data.md
+      - Context Management and Resource Usage: features/context.md
+      - Configuration and Environment: features/config.md
+      # Add more feature files here as needed, for example:
+      # - Another Feature: docs/features/another_feature.md
+markdown_extensions:
+  - admonition
+  - pymdownx.highlight
+  - toc:
+      permalink: true
+  - pymdownx.superfences
+  - pymdownx.details
+  - pymdownx.inlinehilite
+  - pymdownx.emoji
+  - pymdownx.tabbed
+  - pymdownx.tasklist
