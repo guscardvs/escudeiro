@@ -1,3 +1,9 @@
+## 0.2.5 (2025-06-14)
+
+### Fix
+
+- **data**: now properly supports aliases and defaults on converter functions
+
 ## 0.2.4 (2025-06-12)
 
 ### Fix
