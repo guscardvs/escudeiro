@@ -6,9 +6,10 @@ from unittest.mock import Mock
 
 import pytest
 
-from escudeiro.data import UNINITIALIZED, data, factory, field
+from escudeiro.data import UNINITIALIZED, asdict, data, factory, field, fromdict
 from escudeiro.data.helpers import call_init, init_hooks, squire_method
 from escudeiro.data.methods import MethodBuilder
+from escudeiro.misc import next_or
 
 
 @data
@@ -353,7 +354,7 @@ def test_define_does_not_create_hashable_when_it_shouldnt():
     )
 
 
-def test_define_does_not_overwrite_methods_but_creates_gattrs_alternatives():
+def test_define_does_not_overwrite_methods_but_creates_squire_alternatives():
     @data
     class A:
         z: int = False
@@ -569,3 +570,78 @@ def test_define_is_drop_in_replacement_for_dataclass():
     assert default_obj.friends == []
 
     assert sorted([default_obj, another]) == [another, default_obj]
+
+
+def test_define_creates_convertable_classes():
+    @data
+    class A:
+        x: int
+        y: int
+
+    instance = A(1, 2)
+
+    assert asdict(instance) == {"x": 1, "y": 2}
+    assert fromdict(A, {"x": 3, "y": 4}) == A(3, 4)
+
+
+def test_define_creates_convertable_classes_with_aliases():
+    @data
+    class A:
+        x: int = field(alias="xVal")
+        y: int = field(alias="yVal")
+
+    instance = A(xVal=1, yVal=2)
+
+    assert asdict(instance, by_alias=True) == {"xVal": 1, "yVal": 2}
+    assert fromdict(A, {"xVal": 3, "yVal": 4}) == A(3, 4)
+
+
+def test_define_respects_defaults_on_conversions():
+    @data
+    class A:
+        x: int = 1
+        y: int = 2
+
+    instance = A()
+
+    assert asdict(instance) == {"x": 1, "y": 2}
+    assert fromdict(A, {"x": 3}) == A(3, 2)
+    assert fromdict(A, {}) == A(1, 2)
+
+
+def test_define_understands_mixed_alias_name_mappings():
+    @data
+    class A:
+        x: int = field(alias="xVal")
+        y: int = field(alias="yVal")
+
+    instance = A(xVal=1, yVal=2)
+
+    assert asdict(instance, by_alias=True) == {"xVal": 1, "yVal": 2}
+    assert fromdict(A, {"xVal": 3, "yVal": 4}) == A(3, 4)
+    assert fromdict(A, {"x": 5, "y": 6}) == A(5, 6)
+    assert fromdict(A, {"xVal": 7, "y": 8}) == A(7, 8)
+    assert fromdict(A, {"x": 9, "yVal": 10}) == A(9, 10)
+
+
+def test_define_conversions_fail_if_key_missing_without_defaults():
+    @data
+    class A:
+        x: int = field(alias="xVal")
+        y: int = field(alias="yVal")
+
+    with pytest.raises(KeyError) as exc_info:
+        _ = fromdict(A, {"x": 1})
+    assert (
+        next_or(exc_info.value.args)
+        == "Key 'y' or alias 'yVal' not found"
+        + " in mapping: {'x': 1} and no default value provided."
+    )
+
+    with pytest.raises(KeyError) as exc_info:
+        _ = fromdict(A, {})  
+    assert (
+        next_or(exc_info.value.args)
+        == "Key 'x' or alias 'xVal' not found"
+        + " in mapping: {} and no default value provided."
+    )

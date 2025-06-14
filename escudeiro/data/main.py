@@ -566,12 +566,20 @@ def _dict_get(
     name: str,
     alias: str,
     sentinel: Any,
+    default: Any,
     dict_get: Callable[[Mapping, str, Any], Any],
 ):
-    return (
-        val
-        if (val := dict_get(mapping, alias, sentinel)) is not sentinel
-        else mapping[name]
+    val = dict_get(mapping, alias, sentinel)
+    if val is not sentinel:
+        return val
+    val = dict_get(mapping, name, sentinel)
+    if val is not sentinel:
+        return val
+    if default is not sentinel:
+        return default
+    raise KeyError(
+        f"Key '{name}' or alias '{alias}' not found in mapping: {mapping!r}"
+        + " and no default value provided.",
     )
 
 
@@ -594,8 +602,19 @@ def get_squire_serialize(cls: type, field_map: FieldMap):
     for f in field_map.values():
         field_type = f.origin or f.declared_type
         _ = builder.add_glob(f"_field_type_{f.name}", field_type)
+        default_line = "sentinel"
+        if f.has_default:
+            _ = builder.add_glob(
+                f"_field_type_{f.name}_default", f.default
+            )
+            default_line = f"_field_type_{f.name}_default"
+        elif f.has_default_factory:
+            _ = builder.add_glob(
+                f"_field_type_{f.name}_default_factory", f.default
+            )
+            default_line = f"_field_type_{f.name}_default_factory()"
         get_line = (
-            f"dict_get(mapping, {f.name!r}, {f.alias!r},sentinel, _dict_get)"
+            f"dict_get(mapping, {f.name!r}, {f.alias!r}, sentinel, {default_line}, _dict_get)"
         )
         if f.fromdict:
             _ = builder.add_glob(f"_field_type_{f.name}", f.fromdict)
