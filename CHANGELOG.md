@@ -1,3 +1,9 @@
+## 0.2.6 (2025-06-15)
+
+### Fix
+
+- **data**: add support for a ref parameter
+
 ## 0.2.5 (2025-06-14)
 
 ### Fix
