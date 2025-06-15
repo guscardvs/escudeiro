@@ -1,3 +1,9 @@
+## 0.2.8 (2025-06-15)
+
+### Fix
+
+- now properly supports sequence types on load and dump
+
 ## 0.2.7 (2025-06-15)
 
 ### Fix
