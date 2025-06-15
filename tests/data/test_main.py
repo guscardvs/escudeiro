@@ -7,6 +7,7 @@ from unittest.mock import Mock
 import pytest
 
 from escudeiro.data import UNINITIALIZED, asdict, data, factory, field, fromdict
+from escudeiro.data.field_ import private
 from escudeiro.data.helpers import call_init, init_hooks, squire_method
 from escudeiro.data.methods import MethodBuilder
 from escudeiro.misc import next_or
@@ -645,3 +646,28 @@ def test_define_conversions_fail_if_key_missing_without_defaults():
         == "Key 'x' or alias 'xVal' not found"
         + " in mapping: {} and no default value provided."
     )
+
+
+def test_transforms_work_correctly():
+    # Test that a transform function is applied correctly
+    @data
+    class A:
+        x: int
+        y: float = private(ref=lambda ainstance: ainstance.x * 2.0)
+
+    a = A(3)
+
+    assert a.y == 6.0
+
+def test_transform_works_with_mutable():
+    @data(frozen=False)
+    class A:
+        names: list[str]
+        comma_separated:  str = private(
+            ref=lambda ainstance: ", ".join(ainstance.names) if ainstance.names else ""
+        )
+    a = A(["Alice", "Bob", "Charlie"])
+    assert a.comma_separated == "Alice, Bob, Charlie"
+
+    
+

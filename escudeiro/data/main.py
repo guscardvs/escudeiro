@@ -322,6 +322,13 @@ def _get_init(cls: type, field_map: FieldMap, opts: InitOptions):
                 _ = builder.add_scriptline(
                     _setattr(field_name, f"{factory_name}()")
                 ).add_glob(factory_name, f.default)
+            elif f.ref:
+                _ = builder.add_scriptline(
+                    _setattr(
+                        field_name,
+                        f"attr_dict['{field_name}'].ref(self)",
+                    )
+                )
             else:
                 _ = builder.add_scriptline(
                     _setattr(field_name, "UNINITIALIZED")
@@ -343,6 +350,19 @@ def _get_init(cls: type, field_map: FieldMap, opts: InitOptions):
             ):
                 _ = builder.add_scriptline(line)
             _ = builder.add_glob(init_factory_name, f.default)
+        elif f.ref:
+            arg = f"{arg_name}=MISSING"
+            init_transform_name = f"__attr_transform_{field_name}"
+            for line in (
+                f"if {arg_name} is not MISSING:",
+                f"    {_setattr(field_name, arg_name)}",
+                "else:",
+                f"    {_setattr(field_name, f'{init_transform_name}(self)')}",
+            ):
+                _ = builder.add_scriptline(line)
+            _ = builder.add_glob(
+                init_transform_name, f.ref
+            )
         else:
             _ = builder.add_scriptline(_setattr(field_name, arg_name))
             arg = arg_name
@@ -353,6 +373,7 @@ def _get_init(cls: type, field_map: FieldMap, opts: InitOptions):
         _ = builder.add_annotation(arg_name, f.declared_type)
     if hasattr(cls, "__post_init__"):
         _ = builder.add_scriptline("self.__post_init__()")
+    print("\n", builder.make_methodstr("init")[1], "\n")
     return builder.build(cls)
 
 

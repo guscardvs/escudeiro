@@ -23,6 +23,7 @@ class Field:
         "asdict_",
         "fromdict",
         "inherited",
+        "ref",
     )
 
     def __init__(
@@ -40,6 +41,7 @@ class Field:
         asdict_: Callable[[Any], Any] | None,
         fromdict: Callable[[Any], Any] | None,
         inherited: bool = False,
+        ref: Callable[[Any], Any] | None = None,
     ) -> None:
         self.name: str = name
         self.annotation: DisassembledType = annotation
@@ -54,6 +56,7 @@ class Field:
         self.asdict_: Callable[[Any], Any] | None = asdict_
         self.fromdict: Callable[[Any], Any] | None = fromdict
         self.inherited: bool = inherited
+        self.ref: Callable[[Any], Any] | None = ref
 
     @property
     def argname(self):
@@ -118,6 +121,8 @@ class Field:
                     f"hash={self.hash}",
                     f"repr={self.repr}",
                     f"asdict_={self.asdict_}",
+                    f"fromdict={self.fromdict}",
+                    f"transform={self.ref}",
                     f"inherited={self.inherited}",
                 )
             )
@@ -146,6 +151,7 @@ class FieldInfo:
         "repr",
         "asdict_",
         "fromdict",
+        "ref",
     )
 
     def __init__(
@@ -160,6 +166,7 @@ class FieldInfo:
         repr: bool | Callable[[Any], str],
         asdict_: Callable[[Any], Any] | None,
         fromdict: Callable[[Any], Any] | None,
+        ref: Callable[[Any], Any] | None = None,
     ) -> None:
         self.default: Any = default
         self.kw_only: bool = kw_only
@@ -171,6 +178,7 @@ class FieldInfo:
         self.repr: bool | Callable[[Any], str] = repr
         self.asdict_: Callable[[Any], Any] | None = asdict_
         self.fromdict: Callable[[Any], Any] | None = fromdict
+        self.ref: Callable[[Any], Any] | None = ref
 
     def asdict(self):
         return {key: getattr(self, key) for key in self.__slots__}
@@ -212,6 +220,7 @@ def field(
     asdict: Callable[[Any], Any] | None = None,
     fromdict: Callable[[Any], Any] | None = None,
 ) -> Any: ...
+
 
 
 @overload
@@ -261,16 +270,17 @@ def field(
     if not isinstance(default_factory, EllipsisType):
         default = factory(default_factory)
     return FieldInfo(
-        default if default is not Ellipsis else MISSING,
-        alias,
-        kw_only,
-        eq,
-        order,
-        init,
-        hash,
-        repr,
-        asdict,
-        fromdict,
+        default=default if default is not Ellipsis else MISSING,
+        alias=alias,
+        kw_only=kw_only,
+        eq=eq,
+        order=order,
+        init=init,
+        hash=hash,
+        repr=repr,
+        asdict_=asdict,
+        fromdict=fromdict,
+        ref=None,
     )
 
 
@@ -301,6 +311,22 @@ def private(
     repr: bool | Callable[[Any], str] = True,
     asdict: Callable[[Any], Any] | None = None,
     fromdict: Callable[[Any], Any] | None = None,
+    ref: Callable[[Any], Any] | None = None,
+): ...
+
+
+@overload
+def private(
+    *,
+    ref: Callable[[Any], Any],
+    alias: str = "",
+    kw_only: bool = False,
+    eq: BoolOrCallable = True,
+    order: BoolOrCallable = True,
+    hash: BoolOrCallable = True,
+    repr: bool | Callable[[Any], str] = True,
+    asdict: Callable[[Any], Any] | None = None,
+    fromdict: Callable[[Any], Any] | None = None,
 ): ...
 
 
@@ -316,6 +342,7 @@ def private(
     repr: bool | Callable[[Any], str] = True,
     asdict: Callable[[Any], Any] | None = None,
     fromdict: Callable[[Any], Any] | None = None,
+    ref: Callable[[Any], Any] | None = None,
 ) -> FieldInfo:
     """Declare metadata for a field not added to init.
     :param initial: The initial value of the field.
@@ -323,21 +350,22 @@ def private(
     Parameters are the same as in info."""
     if isinstance(initial, EllipsisType) and isinstance(
         initial_factory, EllipsisType
-    ):
+    ) and ref is None:
         raise ValueError("No initial value provided")
     if not isinstance(initial_factory, EllipsisType):
         initial = factory(initial_factory)
     return FieldInfo(
-        initial,
-        alias,
-        kw_only,
-        eq,
-        order,
-        False,
-        hash,
-        repr,
-        asdict,
-        fromdict,
+        default=initial if initial is not Ellipsis else MISSING,
+        alias=alias,
+        kw_only=kw_only,
+        eq=eq,
+        order=order,
+        init=False,
+        hash=hash,
+        repr=repr,
+        asdict_=asdict,
+        fromdict=fromdict,
+        ref=ref,
     )
 
 

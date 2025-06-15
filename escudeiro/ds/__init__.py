@@ -4,6 +4,7 @@ from .filetree.virtual import VirtualFileTree
 from .manager import TaskManager
 from .pools.asyncio import AsyncPool
 from .pools.thread import ThreadPool
+from .registry import CallableRegistry, Registry
 from .scheduler import CronInfo, Task, TaskScheduler
 from .worker import WorkerQueue
 
@@ -19,4 +20,6 @@ __all__ = [
     "with_circuit_breaker",
     "FileTree",
     "VirtualFileTree",
+    "Registry",
+    "CallableRegistry",
 ]
