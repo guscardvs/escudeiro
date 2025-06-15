@@ -671,3 +671,20 @@ def test_transform_works_with_mutable():
 
     
 
+def test_squire_serialize_properly_handles_sequence_types():
+    @data
+    class B:
+        z: int
+    @data
+    class A:
+        x: int
+        y: list[B] = field(default_factory=list)
+        w: list[float] = field(default_factory=list)
+
+    @data
+    class C:
+        a: int
+        b: set[int] = field(default_factory=set)
+
+    assert fromdict(A, {"x": 1, "y": [{"z": 2}, {"z": 3}], "w": [1.0, 2.0]}) == A(1, [B(2), B(3)], [1.0, 2.0])
+    assert fromdict(C, {"a": 1, "b": [2, 3]}) == C(1, {2, 3})

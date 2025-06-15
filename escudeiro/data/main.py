@@ -646,25 +646,22 @@ def get_squire_serialize(cls: type, field_map: FieldMap):
         elif not isinstance(field_type, type):  # pyright: ignore[reportUnnecessaryIsInstance]
             arg = f"({get_line})"
         elif issubclass(field_type, list | tuple | set | dict):
-            arg, globs = _get_gserialize_sequence_arg(f)
+            arg, globs = _get_gserialize_sequence_arg(f, get_line)
             _ = builder.merge_globs(globs)
         else:
             arg = f"_field_type_{f.name}({get_line})"
         args.append(f"{f.alias}={arg}")
-    return builder.add_scriptline(f"return cls({', '.join(args)})").build(cls)
+    _ = builder.add_scriptline(f"return cls({', '.join(args)})")
+    return builder.build(cls)
 
 
 def _get_gserialize_sequence_arg(
     field: Field,
+    get_line: str,
 ) -> tuple[str, Mapping[str, Any]]:
     field_type = field.origin or field.declared_type
     globs = {}
-    default_line = (
-        f"dict_get(mapping, {field.name!r}, {field.alias!r},"
-        "sentinel, _dict_get)"
-    )
-
-    returnline = default_line
+    returnline = get_line
     if not field.args:
         pass
     elif (
@@ -680,10 +677,10 @@ def _get_gserialize_sequence_arg(
             for idx in idx_to_parse:
                 globs[f"_elem_type_{field.name}_{idx}"] = field.args[idx]
             tuple_args = ", ".join(
-                f"{default_line}[{idx}]"
+                f"{get_line}[{idx}]"
                 if idx not in idx_to_parse
                 else f"_elem_type_{field.name}_{idx}."
-                + f"__squire_serialize__({default_line}[{idx}])"
+                + f"__squire_serialize__({get_line}[{idx}])"
                 for idx, _ in enumerate(field.args)
             )
             returnline = f"({tuple_args})"
@@ -694,8 +691,10 @@ def _get_gserialize_sequence_arg(
             returnline = (
                 f"_field_type_{field.name}("
                 + f"_elem_type_{field.name}.__squire_serialize__(x)"
-                + f" for x in {default_line})"
+                + f" for x in {get_line})"
             )
+        else:
+            returnline = f"_field_type_{field.name}({get_line})"
     return returnline, globs
 
 
