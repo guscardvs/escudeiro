@@ -373,7 +373,6 @@ def _get_init(cls: type, field_map: FieldMap, opts: InitOptions):
         _ = builder.add_annotation(arg_name, f.declared_type)
     if hasattr(cls, "__post_init__"):
         _ = builder.add_scriptline("self.__post_init__()")
-    print("\n", builder.make_methodstr("init")[1], "\n")
     return builder.build(cls)
 
 
