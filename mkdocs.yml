@@ -33,6 +33,7 @@ nav:
         - Circuit Breaker: features/datastructures/circuit.md
         - Pools: features/datastructures/pools.md
         - Filetree: features/datastructures/filetree.md
+        - Registry: features/datastructures/registry.md
       - Data Classes: features/data.md
       - Context Management and Resource Usage: features/context.md
       - Configuration and Environment: features/config.md
