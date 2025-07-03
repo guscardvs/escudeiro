@@ -116,7 +116,7 @@ def _validate_fields_order(fields: Collection[Field]):
     for field in fields:
         if field.kw_only:
             continue
-        if had_default and field.default is MISSING:
+        if had_default and field.default is MISSING and field.ref is None:
             raise ValueError(
                 f"Non default field {field.name!r}"
                 + " after field with default"
