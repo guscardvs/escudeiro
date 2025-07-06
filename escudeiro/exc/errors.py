@@ -77,3 +77,7 @@ class DuplicateFile(SquireError, ValueError):
 
 class RetryError(SquireError):
     """Raised when a retry operation failed."""
+
+
+class MergingError(SquireError, KeyError):
+    """Raised when an error occurs during merging operations."""

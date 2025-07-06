@@ -7,7 +7,7 @@ and advanced iterator operations with strong type safety.
 from __future__ import annotations
 
 import itertools
-from collections import defaultdict
+from collections import defaultdict, deque
 from collections.abc import (
     AsyncIterable,
     Callable,
@@ -19,8 +19,9 @@ from collections.abc import (
     Mapping,
     Sequence,
 )
-from typing import TYPE_CHECKING, Any, cast, overload
+from typing import TYPE_CHECKING, Any, Literal, cast, overload
 
+from escudeiro.exc.errors import MergingError
 from escudeiro.misc.functions import as_async, safe_cast
 
 
@@ -610,3 +611,120 @@ def group_values[K, V](
     for item in vals:
         result[item[group_by_key]].append(item)
     return dict(result)
+
+
+def merge_dicts(
+    left: Mapping[Any, Any],
+    right: Mapping[Any, Any],
+    precedence: Literal["left", "right", "fail"] = "left",
+    merge_sequences: bool = True,
+    shallow: bool = False,
+) -> Mapping[Any, Any]:
+    """Merges two dictionaries with specified precedence and options.
+    If a key exists in both dictionaries, the value from the right dictionary
+    will overwrite the value from the left dictionary based on the precedence.
+    Args:
+        left: The first dictionary to merge, type conflicts are always if right does not match left.
+        right: The second dictionary to merge.
+        precedence: Determines which dictionary's value to keep when a key exists in both.
+            - "left": Keep the value from the left dictionary.
+            - "right": Keep the value from the right dictionary.
+            - "fail": Raise a KeyError if a key exists in both dictionaries.
+        merge_sequences: If True, sequences (lists, tuples) will be merged by concatenation
+            instead of replacing. If False, sequences will be replaced.
+        shallow: If True, performs a shallow merge, only merging the top-level keys.
+            If False, performs a deep merge, merging nested dictionaries and sequences.
+    Returns:
+        A new dictionary containing the merged key-value pairs.
+    Raises:
+        MergingError: If a key exists in both dictionaries and precedence is "fail".
+    """
+
+    if shallow:
+        return shallow_merge_dicts(left, right, precedence)
+    output = {key: value for key, value in left.items() if key not in right}
+    stack = deque([(left, right, output)])
+
+    while stack:
+        current_left, current_right, current_output = stack.pop()
+
+        for key, value in current_right.items():
+            if key not in current_left:
+                current_output[key] = value
+                continue
+            if precedence == "fail":
+                raise MergingError(f"Key '{key}' exists in both dictionaries.")
+
+            left_value = current_left[key]
+            if (
+                isinstance(value, Sequence)
+                and not isinstance(value, str | bytes)
+                and merge_sequences
+            ):
+                if not isinstance(left_value, Sequence) or isinstance(
+                    left_value, str | bytes
+                ):
+                    raise MergingError(
+                        f"Cannot merge sequence with non-sequence: {key}"
+                    )
+                type_ = (
+                    type(left_value) if precedence == "left" else type(value)
+                )
+                merged = tuple(itertools.chain(left_value, value))
+                current_output[key] = safe_cast(
+                    type_,
+                    merged,
+                    TypeError,
+                    ValueError,
+                    KeyError,
+                    default=merged,
+                )
+            elif isinstance(value, Mapping):
+                if not isinstance(left_value, Mapping):
+                    raise MergingError(
+                        f"Cannot merge mapping with non-mapping: {key}"
+                    )
+                new_output = {
+                    lkey: lval
+                    for lkey, lval in left_value.items()
+                    if lkey not in value
+                }
+                current_output[key] = new_output
+                stack.append((left_value, value, new_output))
+            elif precedence == "right":
+                current_output[key] = value
+            else:
+                current_output[key] = left_value
+    return output
+
+
+def shallow_merge_dicts(
+    left: Mapping[Any, Any],
+    right: Mapping[Any, Any],
+    precedence: Literal["left", "right", "fail"] = "left",
+) -> Mapping[Any, Any]:
+    """Merges two dictionaries shallowly with specified precedence.
+    If a key exists in both dictionaries, the value from the right dictionary
+    will overwrite the value from the left dictionary based on the precedence.
+
+    Args:
+        left: The first dictionary to merge.
+        right: The second dictionary to merge.
+        precedence: Determines which dictionary's value to keep when a key exists in both.
+            - "left": Keep the value from the left dictionary.
+            - "right": Keep the value from the right dictionary.
+            - "fail": Raise a MergingError if a key exists in both dictionaries.
+    Returns:
+        A new dictionary containing the merged key-value pairs.
+    """
+    output = {key: value for key, value in left.items() if key not in right}
+    for key, value in right.items():
+        if key not in left:
+            output[key] = value
+        elif precedence == "fail":
+            raise MergingError(f"Key '{key}' exists in both dictionaries.")
+        elif precedence == "right":
+            output[key] = value
+        else:
+            output[key] = left[key]
+    return output

@@ -1,8 +1,11 @@
 import asyncio
 from collections.abc import AsyncGenerator, Collection, Sequence
+from typing import override
+from unittest.mock import Mock, patch
 
 import pytest
 
+from escudeiro.exc.errors import MergingError
 from escudeiro.misc import (
     aall,
     aany,
@@ -26,6 +29,7 @@ from escudeiro.misc import (
     moving_window,
     next_or,
 )
+from escudeiro.misc.iterx import merge_dicts, shallow_merge_dicts
 
 
 # Helper for async tests
@@ -541,3 +545,207 @@ class TestGroupValues:
         data = [{"category": "A"}, {"type": "B"}]
         with pytest.raises(KeyError):
             _ = group_values(data, "category")
+
+
+class TestShallowMergeDicts:
+    def test_basic_merge(self):
+        """Test merging two dictionaries with no common keys.
+        This is the simplest case. It should return a new dictionary
+        containing all key-value pairs from both dictionaries."""
+
+        left = {"a": 1, "b": 2}
+        right = {"b": 3, "c": 4}
+        result = shallow_merge_dicts(left, right)
+        assert result == {"a": 1, "b": 2, "c": 4}
+
+    def test_empty_left(self):
+        """Test merging with an empty left dictionary.
+        This should return the right dictionary as the result."""
+
+        left = {}
+        right = {"a": 1, "b": 2}
+        result = shallow_merge_dicts(left, right)
+        assert result == {"a": 1, "b": 2}
+
+    def test_empty_right(self):
+        """Test merging with an empty right dictionary.
+        This should return the left dictionary as the result."""
+
+        left = {"a": 1, "b": 2}
+        right = {}
+        result = shallow_merge_dicts(left, right)
+        assert result == {"a": 1, "b": 2}
+
+    def test_no_common_keys(self):
+        """Test merging two dictionaries with no common keys.
+        This should return a new dictionary containing all key-value pairs."""
+
+        left = {"a": 1}
+        right = {"b": 2}
+        result = shallow_merge_dicts(left, right)
+        assert result == {"a": 1, "b": 2}
+
+    def test_precedence_left(self):
+        """Test merging with precedence set to 'left'.
+        This means that if a key exists in both dictionaries,
+        the value from the left dictionary should be kept."""
+
+        left = {"a": 1, "b": 2}
+        right = {"b": 3, "c": 4}
+        result = shallow_merge_dicts(left, right, precedence="left")
+        assert result == {"a": 1, "b": 2, "c": 4}
+
+    def test_precedence_right(self):
+        """Test merging with precedence set to 'right'.
+        This means that if a key exists in both dictionaries,
+        the value from the right dictionary should be kept."""
+
+        left = {"a": 1, "b": 2}
+        right = {"b": 3, "c": 4}
+        result = shallow_merge_dicts(left, right, precedence="right")
+        assert result == {"a": 1, "b": 3, "c": 4}
+
+    def test_precedence_fail(self):
+        """Test merging with precedence set to 'fail'.
+        This means that if a key exists in both dictionaries,
+        a MergingError should be raised."""
+
+        left = {"a": 1, "b": 2}
+        right = {"b": 3, "c": 4}
+        with pytest.raises(MergingError):
+            _ = shallow_merge_dicts(left, right, precedence="fail")
+
+
+class TestMergeDicts:
+    def test_basic_merge(self):
+        """Test merging two dictionaries with no common keys.
+        This is the simplest case. It should return a new dictionary
+        containing all key-value pairs from both dictionaries."""
+
+        left = {"a": 1, "b": 2}
+        right = {"b": 3, "c": 4}
+        result = merge_dicts(left, right)
+        assert result == {"a": 1, "b": 2, "c": 4}
+
+    @patch("escudeiro.misc.iterx.shallow_merge_dicts")
+    def test_shallow_merge_called(self, mock_shallow_merge: Mock):
+        """Test that shallow_merge_dicts is called when shallow=True.
+        This ensures that the shallow merge logic is used instead of deep merging."""
+
+        left = {"a": 1, "b": 2}
+        right = {"b": 3, "c": 4}
+        _ = merge_dicts(left, right, shallow=True)
+        mock_shallow_merge.assert_called_once_with(left, right, "left")
+
+    def test_empty_left(self):
+        """Test merging with an empty left dictionary.
+        This should return the right dictionary as the result."""
+
+        left = {}
+        right = {"a": 1, "b": 2}
+        result = merge_dicts(left, right)
+        assert result == {"a": 1, "b": 2}
+
+    def test_empty_right(self):
+        """Test merging with an empty right dictionary.
+        This should return the left dictionary as the result."""
+
+        left = {"a": 1, "b": 2}
+        right = {}
+        result = merge_dicts(left, right)
+        assert result == {"a": 1, "b": 2}
+
+    def test_no_common_keys(self):
+        """Test merging two dictionaries with no common keys.
+        This should return a new dictionary containing all key-value pairs."""
+
+        left = {"a": 1}
+        right = {"b": 2}
+        result = merge_dicts(left, right)
+        assert result == {"a": 1, "b": 2}
+
+    def test_simple_nesting(self):
+        """Test merging dictionaries with simple nested structures.
+        This should merge the nested dictionaries correctly."""
+
+        left = {"a": {"x": 1}, "b": 2}
+        right = {"a": {"y": 2}, "c": 3}
+        result = merge_dicts(left, right)
+        assert result == {"a": {"x": 1, "y": 2}, "b": 2, "c": 3}
+
+    def test_sequence_conflict(self):
+        """Test merging dictionaries with sequence conflicts.
+        This should return a new dictionary with merged sequences in order
+        from left to right."""
+
+        left = {"a": [1, 2], "b": 2}
+        right = {"a": [3, 4], "c": 3}
+        result = merge_dicts(left, right)
+        assert result == {"a": [1, 2, 3, 4], "b": 2, "c": 3}
+
+    def test_sequence_overwrite(self):
+        """Test merging dictionaries with sequence overwrite.
+        This should overwrite the sequence in the left dictionary with the one in the right."""
+
+        left = {"a": [1, 2], "b": 2}
+        right = {"a": [3, 4], "c": 3}
+        result = merge_dicts(
+            left, right, precedence="right", merge_sequences=False
+        )
+        # This should overwrite the sequence in left with the one in right
+        assert result == {"a": [3, 4], "b": 2, "c": 3}
+
+    def test_precedence_right_nesting(self):
+        """Test merging with precedence set to 'right' for nested dictionaries.
+        This means that if a key exists in both dictionaries,
+        the value from the right dictionary should be kept.
+        This should be applied recursively."""
+
+        left = {"a": {"x": 1, "y": 3}, "b": 2}
+        right = {"a": {"y": 2}, "c": 3}
+        result = merge_dicts(left, right, precedence="right")
+        assert result == {"a": {"x": 1, "y": 2}, "b": 2, "c": 3}
+
+    def test_sequence_mismatch(self):
+        """Test merging dictionaries with sequence mismatch.
+        This should raise a MergingError if the left value is not a sequence."""
+
+        left = {"a": "not a sequence", "b": 2}
+        right = {"a": [3, 4], "c": 3}
+        with pytest.raises(MergingError):
+            _ = merge_dicts(left, right)
+
+    def test_precedence_fail_nesting(self):
+        """Test merging with precedence set to 'fail' for nested dictionaries.
+        This means that if a key exists in both dictionaries,
+        a MergingError should be raised if the values are not compatible."""
+
+        left = {"a": {"x": 1}, "b": 2}
+        right = {"a": {"y": 2}, "c": 3}
+        with pytest.raises(MergingError):
+            _ = merge_dicts(left, right, precedence="fail")
+
+    def test_invalid_casting_sequence(self):
+        """Test merging dictionaries with custom sequence types that cannot be cast.
+        This should return a tuple of the sequences from both dictionaries."""
+
+        class CustomSequence(Sequence):
+            def __init__(self, items: Sequence, raise_exc: bool = True):
+                self.items = items
+                if raise_exc:
+                    raise TypeError("CustomSequence cannot be cast.")
+
+            @override
+            def __getitem__(self, index: int | slice):
+                return self.items[index]
+
+            @override
+            def __len__(self):
+                return len(self.items)
+
+        left = {"a": CustomSequence([1, 2], raise_exc=False)}
+        right = {"a": CustomSequence([3, 4], raise_exc=False)}
+        output = merge_dicts(left, right, precedence="right")
+
+        assert isinstance(output["a"], tuple)
+        assert output["a"] == (1, 2, 3, 4)

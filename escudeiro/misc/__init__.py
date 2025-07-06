@@ -48,6 +48,8 @@ from escudeiro.misc.iterx import (
     invert_dict,
     moving_window,
     next_or,
+    merge_dicts,
+    shallow_merge_dicts
 )
 from escudeiro.misc.lazy import lazymethod
 from escudeiro.misc.strings import (
@@ -139,4 +141,6 @@ __all__ = [
     "ValueEnum",
     "walk_object",
     "wrap",
+    "merge_dicts",
+    "shallow_merge_dicts"
 ]
