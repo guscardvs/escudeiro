@@ -1,3 +1,10 @@
+## 0.2.9 (2025-07-06)
+
+### Fix
+
+- implemented merge_dicts into iterx module
+- **data**: no longer considers a private field with ref as empty
+
 ## 0.2.8 (2025-06-15)
 
 ### Fix
