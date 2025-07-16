@@ -1,3 +1,9 @@
+## 0.2.10 (2025-07-16)
+
+### Fix
+
+- implement missing monad, pathx, and string utilities; update tests for new casting and path validation logic
+
 ## 0.2.9 (2025-07-16)
 
 ### Fix
