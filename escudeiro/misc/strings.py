@@ -216,3 +216,40 @@ def strip_comment(value: str, closing_quote: int | None = None) -> str:
     if comment_starts is None:
         return value
     return value[:comment_starts].rstrip()
+
+
+def as_boolean(string: str) -> bool | None:
+    """
+    Converts a string to its boolean equivalent.
+
+    Args:
+        string (str): The string to check if it represents a boolean value.
+
+    Returns:
+        bool | None: Returns True for "true", "1", "yes"; False for "false", "0", "no"; None for empty string.
+        If the string does not match any of these, it returns None.
+    """
+    boolean_map = {
+        "true": True,
+        "1": True,
+        "yes": True,
+        "false": False,
+        "0": False,
+        "no": False,
+        "": False,
+    }
+    return boolean_map.get(string.lower())
+
+
+def is_none(string: str) -> bool:
+    """
+    Checks if a string is None or empty.
+
+    Args:
+        string (str): The string to check.
+
+    Returns:
+        bool: True if the string is None or empty, False otherwise.
+    """
+    null_set = frozenset({"null", "none", "nil", ""})
+    return string.lower() in null_set

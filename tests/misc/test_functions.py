@@ -4,12 +4,13 @@ import asyncio
 import contextlib
 from collections.abc import AsyncIterable, Callable
 from datetime import UTC, date, datetime, time
-from typing import Any, NoReturn
+from functools import partial
+from typing import Any, NoReturn, Self
 from unittest.mock import AsyncMock, MagicMock, Mock, call, patch
 
 import pytest
 
-from escudeiro.exc.errors import ErrorGroup, RetryError
+from escudeiro.exc.errors import ErrorGroup, InvalidCast, RetryError
 from escudeiro.misc import (
     FrozenCoroutine,
     Retry,
@@ -26,8 +27,11 @@ from escudeiro.misc import (
     raise_insteadof,
     safe_cast,
     walk_object,
+    Caster,
+    isinstance_or_cast,
 )
 from escudeiro.misc.iterx import filter_isinstance, next_or
+from escudeiro.misc.strings import sentence, squote
 
 
 class TestSafeCast:
@@ -958,6 +962,7 @@ class TestRetryAgenMap:
 
 # ...existing code...
 
+
 class TestWalkObject:
     def test_walk_object_with_dict(self):
         data = {"a": {"b": {"c": 42}}}
@@ -972,6 +977,7 @@ class TestWalkObject:
             def __init__(self):
                 self.x = 10
                 self.child = type("Child", (), {"y": 20})()
+
         obj = Dummy()
         assert walk_object(obj, "x") == 10
         assert walk_object(obj, "child.y") == 20
@@ -995,6 +1001,7 @@ class TestWalkObject:
     def test_walk_object_returns_none_for_missing_attribute(self):
         class Dummy:
             pass
+
         obj = Dummy()
         assert walk_object(obj, "not_found") is None
 
@@ -1006,5 +1013,264 @@ class TestWalkObject:
         class Dummy:
             def __init__(self):
                 self.x = [{"y": 123}]
+
         obj = Dummy()
         assert walk_object(obj, "x.[0].y") == 123
+
+
+class TestIsInstanceOrCast:
+    def test_isinstance_or_cast_isinstance_success(self):
+        value = 42
+
+        @partial(isinstance_or_cast, int)
+        def caster(value: str) -> int:
+            return int(value)
+
+        result = caster(value)
+
+        assert result is value  # Should return the original value
+
+    def test_isinstance_or_cast_runs_caster_on_failure(self):
+        value = "42"
+        caster = MagicMock(return_value=42)
+
+        result = isinstance_or_cast(int, caster)(value)
+
+        assert result == 42
+        assert caster.call_count == 1
+        caster.assert_called_once_with(value)
+
+
+class TestCaster:
+    def test_caster_with_default_call(self):
+        caster = Caster(int)
+        value = "123"
+        result = caster(value)
+        assert result == 123
+
+    def test_caster_with_join(self):
+        caster = Caster(int).join(float)
+        value = "123"
+
+        result = caster(value)
+
+        assert result == 123.0
+
+    def test_caster_with_strict(self):
+        @Caster
+        def caster(value: str) -> int | None:
+            try:
+                return int(value)
+            except (TypeError, ValueError):
+                return None
+
+        value = "123.456"
+
+        with pytest.raises(InvalidCast) as exc_info:
+            _ = caster.strict(value)
+
+        assert (
+            exc_info.value.args[0]
+            == f"Received falsy value None from {value} during cast."
+        )
+
+    def test_caster_with_strict_success(self):
+        @Caster
+        def caster(value: str) -> int | None:
+            try:
+                return int(value)
+            except (TypeError, ValueError):
+                return None
+
+        value = "123"
+
+        result = caster.strict(value)
+
+        assert result == 123
+
+    def test_with_caster_safe(self):
+        value = "abc"
+        result = Caster(int).safe(value)
+
+        assert result is None
+
+    def test_with_caster_safe_success(self):
+        value = "123"
+        result = Caster(int).safe(value)
+
+        assert result == 123
+
+    def test_with_caster_safe_custom_default(self):
+        value = "abc"
+        result = Caster(int).safe(value, default=42)
+
+        assert result == 42
+
+    def test_caster_with_safe_custom_exceptions(self):
+        class CustomException(Exception):
+            pass
+
+        @Caster
+        def caster(value: str) -> int | None:
+            try:
+                return int(value)
+            except ValueError as err:
+                raise CustomException("Custom error during cast") from err
+
+        value = "abc"
+        result = caster.safe(value, CustomException, default=42)
+
+        assert result == 42
+
+    def test_caster_with_safe_custom_exceptions_no_match(self):
+        class CustomException(Exception):
+            pass
+
+        @Caster
+        def caster(value: str) -> int | None:
+            try:
+                return int(value)
+            except CustomException:
+                return None
+
+        value = "abc"
+        result = caster.safe(value, ValueError, default=42)
+
+        assert result == 42
+
+    def test_caster_or_success(self):
+        caster = Caster[str, int](int).or_(float)
+        value = "123.456"
+        result = caster(value)
+
+        assert result == 123.456
+
+    def test_caster_or_failure(self):
+        caster = Caster[str, int](int).or_(float)
+        value = "abc"
+
+        with pytest.raises(ValueError) as exc_info:
+            _ = caster(value)
+
+        assert str(exc_info.value) == "could not convert string to float: 'abc'"
+
+    def test_caster_isinstance_or_cast_success(self):
+        class Custom:
+            def __init__(self, value: int):
+                self.value = value
+
+            @classmethod
+            def cast(cls, value: str) -> Self:
+                return cls(int(value))
+
+        value = Custom(42)
+        caster = Caster.isinstance_or_cast(Custom, Custom.cast)
+
+        assert caster(value) is value
+
+    def test_caster_isinstance_or_cast_failure(self):
+        class Custom:
+            def __init__(self, value: int):
+                self.value = value
+
+            @classmethod
+            def cast(cls, value: str) -> Self:
+                return cls(int(value))
+
+        value = "123"
+        caster = Caster.isinstance_or_cast(Custom, Custom.cast)
+
+        result = caster(value)
+
+        assert isinstance(result, Custom)
+        assert result.value == 123
+
+    def test_with_rule_success_no_rulename(self):
+        @Caster
+        def caster(value: str) -> int:
+            return int(value)
+
+        value = "123"
+
+        def rule(x):
+            return x < 124
+
+        result = caster.with_rule(rule)(value)
+
+        assert result == 123
+
+    def test_with_rule_fail_no_rulename(self):
+        @Caster
+        def caster(value: str) -> int:
+            return int(value)
+
+        def rule(x):
+            return x < 100
+
+        value = "123"
+        with pytest.raises(InvalidCast) as exc_info:
+            _ = caster.with_rule(rule)(value)
+
+        assert exc_info.value.args == (
+            sentence(
+                f"result {123} does not satisfy the rule {squote(rule.__name__)}"
+            ),
+            123,
+        )
+
+    def test_with_rule_fail_with_unnamed_lambda(self):
+        @Caster
+        def caster(value: str) -> int:
+            return int(value)
+
+        value = "123"
+        with pytest.raises(
+            ValueError, match="Rule name must be provided for lambda functions"
+        ):
+            _ = caster.with_rule(lambda x: x < 100)(value)
+
+    def test_with_rule_success_with_rulename(self):
+        @Caster
+        def caster(value: str) -> int:
+            return int(value)
+
+        value = "123"
+        result = caster.with_rule(
+            lambda x: x < 124, "Value must be less than 124"
+        )(value)
+
+        assert result == 123
+
+    def test_with_rule_fail_with_rulename(self):
+        @Caster
+        def caster(value: str) -> int:
+            return int(value)
+
+        def rule(x):
+            return x < 100
+
+        rulename = "Value must be less than 100"
+        value = "123"
+        with pytest.raises(InvalidCast) as exc_info:
+            _ = caster.with_rule(rule, rulename)(value)
+
+        assert exc_info.value.args == (
+            sentence(f"result 123 does not satisfy the rule {squote(rulename)}"),
+            123,
+        )
+
+    def test_with_rule_fail_for_named_lambda(self):
+        @Caster
+        def caster(value: str) -> int:
+            return int(value)
+
+        value = "123"
+        rulename = "Value must be less than 100"
+
+        with pytest.raises(InvalidCast) as exc_info:
+            _ = caster.with_rule(lambda x: x < 100, rulename)(value)
+
+        assert exc_info.value.args == (
+            sentence(f"result 123 does not satisfy the rule {squote(rulename)}"),
+            123,
+        )

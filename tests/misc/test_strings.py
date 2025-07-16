@@ -1,125 +1,141 @@
 from escudeiro.misc import strings
 
 
-def test_to_snake():
-    assert strings.to_snake("CamelCase") == "camel_case"
-    assert strings.to_snake("camelCase") == "camel_case"
-    assert strings.to_snake("camel case") == "camel_case"
-    assert strings.to_snake("camel_case") == "camel_case"
-    assert strings.to_snake("camel-case") == "camel_case"
+class TestStringConversions:
+    def test_to_snake(self):
+        assert strings.to_snake("CamelCase") == "camel_case"
+        assert strings.to_snake("camelCase") == "camel_case"
+        assert strings.to_snake("camel case") == "camel_case"
+        assert strings.to_snake("camel_case") == "camel_case"
+        assert strings.to_snake("camel-case") == "camel_case"
+
+    def test_to_camel(self):
+        assert strings.to_camel("camel_case") == "camelCase"
+        assert strings.to_camel("camelCase") == "camelCase"
+        assert strings.to_camel("camel case") == "camelCase"
+        assert strings.to_camel("camel_case_") == "camelCase"
+        assert strings.to_camel("camel-case") == "camelCase"
+        assert strings.to_camel("CamelCase") == "camelCase"
+
+    def test_to_pascal(self):
+        assert strings.to_pascal("camel_case") == "CamelCase"
+        assert strings.to_pascal("camelCase") == "CamelCase"
+        assert strings.to_pascal("camel case") == "CamelCase"
+        assert strings.to_pascal("camel_case_") == "CamelCase"
+        assert strings.to_pascal("camel-case") == "CamelCase"
+        assert strings.to_pascal("CamelCase") == "CamelCase"
+
+    def test_to_kebab(self):
+        assert strings.to_kebab("camel_case") == "camel-case"
+        assert strings.to_kebab("camelCase") == "camel-case"
+        assert strings.to_kebab("camel case") == "camel-case"
+        assert (
+            strings.to_kebab("camel_case_", remove_trailing_underscores=True)
+            == "camel-case"
+        )
+        assert strings.to_kebab("camel-case") == "camel-case"
+        assert strings.to_kebab("CamelCase") == "camel-case"
 
 
-def test_to_camel():
-    assert strings.to_camel("camel_case") == "camelCase"
-    assert strings.to_camel("camelCase") == "camelCase"
-    assert strings.to_camel("camel case") == "camelCase"
-    assert strings.to_camel("camel_case_") == "camelCase"
-    assert strings.to_camel("camel-case") == "camelCase"
-    assert strings.to_camel("CamelCase") == "camelCase"
+class TestMakeLexSeparator:
+    def test_make_lex_separator(self):
+        assert strings.make_lex_separator(tuple, str)("a,b,c") == (
+            "a",
+            "b",
+            "c",
+        )
+        assert strings.make_lex_separator(list, str)("a,b,c") == ["a", "b", "c"]
+        assert strings.make_lex_separator(set, str)("a,b,c") == {"a", "b", "c"}
+
+        assert strings.make_lex_separator(tuple, int)("1,2,3") == (1, 2, 3)
+        assert strings.make_lex_separator(list, int)("1,2,3") == [1, 2, 3]
+        assert strings.make_lex_separator(set, int)("1,2,3") == {1, 2, 3}
+
+        assert strings.make_lex_separator(tuple, float)("1.1,2.2,3.3") == (
+            1.1,
+            2.2,
+            3.3,
+        )
+        assert strings.make_lex_separator(list, float)("1.1,2.2,3.3") == [
+            1.1,
+            2.2,
+            3.3,
+        ]
+        assert strings.make_lex_separator(set, float)("1.1,2.2,3.3") == {
+            1.1,
+            2.2,
+            3.3,
+        }
 
 
-def test_to_pascal():
-    assert strings.to_pascal("camel_case") == "CamelCase"
-    assert strings.to_pascal("camelCase") == "CamelCase"
-    assert strings.to_pascal("camel case") == "CamelCase"
-    assert strings.to_pascal("camel_case_") == "CamelCase"
-    assert strings.to_pascal("camel-case") == "CamelCase"
-    assert strings.to_pascal("CamelCase") == "CamelCase"
+class TestQuote:
+    def test_quote(self):
+        assert strings.wrap("foo", "'") == "'foo'"
+        assert strings.wrap("foo", '"') == '"foo"'
+        assert strings.squote("foo") == "'foo'"
+        assert strings.dquote("foo") == '"foo"'
 
 
-def test_to_kebab():
-    assert strings.to_kebab("camel_case") == "camel-case"
-    assert strings.to_kebab("camelCase") == "camel-case"
-    assert strings.to_kebab("camel case") == "camel-case"
-    assert (
-        strings.to_kebab("camel_case_", remove_trailing_underscores=True)
-        == "camel-case"
-    )
-    assert strings.to_kebab("camel-case") == "camel-case"
-    assert strings.to_kebab("CamelCase") == "camel-case"
+class TestConvert:
+    def test_convert(self):
+        assert strings.convert({"foo": "bar"}, strings.to_snake) == {
+            "foo": "bar"
+        }
+        assert strings.convert({"foo": "bar"}, strings.to_camel) == {
+            "foo": "bar"
+        }
+        assert strings.convert({"foo": "bar"}, strings.to_pascal) == {
+            "Foo": "bar"
+        }
+        assert strings.convert({"foo": "bar"}, strings.to_kebab) == {
+            "foo": "bar"
+        }
+
+    def test_convert_all(self):
+        assert strings.convert_all({"foo": "bar"}, strings.to_snake) == {
+            "foo": "bar"
+        }
+        assert strings.convert_all({"foo": "bar"}, strings.to_camel) == {
+            "foo": "bar"
+        }
+        assert strings.convert_all(
+            {"foo": {"bar": "baz"}}, strings.to_pascal
+        ) == {"Foo": {"Bar": "baz"}}
+        assert strings.convert_all({"foo": "bar"}, strings.to_kebab) == {
+            "foo": "bar"
+        }
 
 
-def test_make_lex_separator():
-    assert strings.make_lex_separator(tuple, str)("a,b,c") == ("a", "b", "c")
-    assert strings.make_lex_separator(list, str)("a,b,c") == ["a", "b", "c"]
-    assert strings.make_lex_separator(set, str)("a,b,c") == {"a", "b", "c"}
-
-    assert strings.make_lex_separator(tuple, int)("1,2,3") == (1, 2, 3)
-    assert strings.make_lex_separator(list, int)("1,2,3") == [1, 2, 3]
-    assert strings.make_lex_separator(set, int)("1,2,3") == {1, 2, 3}
-
-    assert strings.make_lex_separator(tuple, float)("1.1,2.2,3.3") == (
-        1.1,
-        2.2,
-        3.3,
-    )
-    assert strings.make_lex_separator(list, float)("1.1,2.2,3.3") == [
-        1.1,
-        2.2,
-        3.3,
-    ]
-    assert strings.make_lex_separator(set, float)("1.1,2.2,3.3") == {
-        1.1,
-        2.2,
-        3.3,
-    }
+class TestCommaSeparator:
+    def test_comma_separator(self):
+        assert strings.comma_separator("Hello world") == ("Hello world",)
+        assert strings.comma_separator("Hello,world") == ("Hello", "world")
+        assert strings.comma_separator("Hello, world") == ("Hello", "world")
+        assert strings.comma_separator("Hello, world,") == ("Hello", "world")
 
 
-def test_quote():
-    assert strings.wrap("foo", "'") == "'foo'"
-    assert strings.wrap("foo", '"') == '"foo"'
-    assert strings.squote("foo") == "'foo'"
-    assert strings.dquote("foo") == '"foo"'
+class TestSentence:
+    def test_sentence(self):
+        assert strings.sentence("Hello world") == "Hello world."
+        assert strings.sentence("Hello world.") == "Hello world."
+        assert strings.sentence("Hello world?") == "Hello world."
+        assert strings.sentence("Hello world!") == "Hello world."
 
 
-def test_convert():
-    assert strings.convert({"foo": "bar"}, strings.to_snake) == {"foo": "bar"}
-    assert strings.convert({"foo": "bar"}, strings.to_camel) == {"foo": "bar"}
-    assert strings.convert({"foo": "bar"}, strings.to_pascal) == {"Foo": "bar"}
-    assert strings.convert({"foo": "bar"}, strings.to_kebab) == {"foo": "bar"}
+class TestExclamation:
+    def test_exclamation(self):
+        assert strings.exclamation("Hello world") == "Hello world!"
+        assert strings.exclamation("Hello world.") == "Hello world!"
+        assert strings.exclamation("Hello world?") == "Hello world!"
+        assert strings.exclamation("Hello world!") == "Hello world!"
 
 
-def test_convert_all():
-    assert strings.convert_all({"foo": "bar"}, strings.to_snake) == {
-        "foo": "bar"
-    }
-    assert strings.convert_all({"foo": "bar"}, strings.to_camel) == {
-        "foo": "bar"
-    }
-    assert strings.convert_all({"foo": {"bar": "baz"}}, strings.to_pascal) == {
-        "Foo": {"Bar": "baz"}
-    }
-    assert strings.convert_all({"foo": "bar"}, strings.to_kebab) == {
-        "foo": "bar"
-    }
-
-
-def test_comma_separator():
-    assert strings.comma_separator("Hello world") == ("Hello world",)
-    assert strings.comma_separator("Hello,world") == ("Hello", "world")
-    assert strings.comma_separator("Hello, world") == ("Hello", "world")
-    assert strings.comma_separator("Hello, world,") == ("Hello", "world")
-
-
-def test_sentence():
-    assert strings.sentence("Hello world") == "Hello world."
-    assert strings.sentence("Hello world.") == "Hello world."
-    assert strings.sentence("Hello world?") == "Hello world."
-    assert strings.sentence("Hello world!") == "Hello world."
-
-
-def test_exclamation():
-    assert strings.exclamation("Hello world") == "Hello world!"
-    assert strings.exclamation("Hello world.") == "Hello world!"
-    assert strings.exclamation("Hello world?") == "Hello world!"
-    assert strings.exclamation("Hello world!") == "Hello world!"
-
-
-def test_question():
-    assert strings.question("Hello world") == "Hello world?"
-    assert strings.question("Hello world.") == "Hello world?"
-    assert strings.question("Hello world?") == "Hello world?"
-    assert strings.question("Hello world!") == "Hello world?"
+class TestQuestion:
+    def test_question(self):
+        assert strings.question("Hello world") == "Hello world?"
+        assert strings.question("Hello world.") == "Hello world?"
+        assert strings.question("Hello world?") == "Hello world?"
+        assert strings.question("Hello world!") == "Hello world?"
 
 
 class TestClosingQuotePosition:
@@ -273,3 +289,32 @@ class TestStripComment:
         for input_str, expected in test_cases:
             closing = strings.closing_quote_position(input_str)
             assert strings.strip_comment(input_str, closing) == expected
+
+
+class TestAsBoolean:
+    def test_as_boolean(self):
+        assert strings.as_boolean("True") is True
+        assert strings.as_boolean("true") is True
+        assert strings.as_boolean("1") is True
+        assert strings.as_boolean("False") is False
+        assert strings.as_boolean("false") is False
+        assert strings.as_boolean("0") is False
+        assert strings.as_boolean("yes") is True
+        assert strings.as_boolean("no") is False
+        assert strings.as_boolean("") is False
+        assert strings.as_boolean("random string") is None
+
+
+class TestIsNone:
+    def test_is_none(self):
+        assert strings.is_none("") is True
+        assert strings.is_none("None") is True
+        assert strings.is_none("none") is True
+        assert strings.is_none("null") is True
+        assert strings.is_none("NULL") is True
+        assert strings.is_none("nil") is True
+        assert strings.is_none("NIL") is True
+        assert strings.is_none("NaN") is False
+        assert strings.is_none("nan") is False
+        assert strings.is_none("0") is False
+        assert strings.is_none("1") is False

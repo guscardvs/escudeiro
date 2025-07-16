@@ -16,6 +16,8 @@ from escudeiro.config.core.utils import (
     with_rule,
 )
 from escudeiro.exc import InvalidCast, InvalidEnv, MissingName
+from escudeiro.misc.pathx import is_valid_path
+from escudeiro.misc.strings import squote
 
 
 def test_boolean_returns_valid_bool():
@@ -64,9 +66,9 @@ def test_valid_path_raises_file_not_found_error():
     with pytest.raises(InvalidCast) as exc_info:
         _ = cfg("key", valid_path)
 
-    assert isinstance(exc_info.value.__cause__, FileNotFoundError)
+    assert isinstance(exc_info.value.__cause__, InvalidCast)
     assert exc_info.value.__cause__.args == (
-        f"Path {valpath!s} is not valid path",
+        f"result {valpath!s} does not satisfy the rule {squote(is_valid_path.__name__)}.",
         valpath,
     )
 

@@ -5,6 +5,7 @@ from functools import partial, wraps
 from pathlib import Path
 from types import NoneType
 from typing import Any, Literal, NamedTuple, TypeVar, final
+from typing_extensions import deprecated
 
 from escudeiro.exc import (
     InvalidCast,
@@ -13,9 +14,15 @@ from escudeiro.exc import (
     StrictCast,
 )
 from escudeiro.misc import sentence
+from escudeiro.misc.functions import Caster, isinstance_or_cast
+from escudeiro.misc.pathx import autopath, is_valid_link, is_valid_path
+from escudeiro.misc.strings import as_boolean, is_none
 
 
 @final
+@deprecated(
+    "Use `escudeiro.misc.Caster` instead. This will be removed without notice in the future."
+)
 class maybe_result[**P, T]:
     """Raises error if receives None value on .strict()"""
 
@@ -38,6 +45,9 @@ class maybe_result[**P, T]:
             return self._func(*args, **kwargs)
 
 
+@deprecated(
+    "Use `escudeiro.misc.isinstance_or_cast` instead. This will be removed without notice in the future."
+)
 def instance_is_casted[Arg, T, U](
     expects: type[T], onmiss: Callable[[Arg], T | U]
 ) -> Callable[[Arg | T], T | U]:
@@ -55,8 +65,7 @@ def instance_is_casted[Arg, T, U](
     return _check
 
 
-@maybe_result
-@partial(instance_is_casted, bool)
+@partial(Caster.isinstance_or_cast, bool)
 def boolean_cast(string: str):
     """
     Converts a string to its boolean equivalent.
@@ -71,38 +80,17 @@ def boolean_cast(string: str):
         If called with `.strict(string)`, it raises an error if `boolean_cast` returns None.
         If called with `.optional(string)`, it returns Optional[bool], suppressing exceptions caused by None values.
     """
-    return {
-        "true": True,
-        "false": False,
-        "1": True,
-        "0": False,
-        "": False,
-    }.get(string.lower())
+    return as_boolean(string)
 
 
-@partial(instance_is_casted, Path)
-def valid_path(val: str) -> Path:
-    """
-    Converts a string to a Path object and checks if the path exists.
-
-    Args:
-        val (str): The string representing a file path.
-
-    Raises:
-        FileNotFoundError: If the path does not exist.
-
-    Returns:
-        Path: A Path object representing the file path.
-    """
-    valpath = Path(val)
-    if not valpath.exists():
-        raise FileNotFoundError(f"Path {valpath!s} is not valid path", valpath)
-    return valpath
+valid_path = Caster(autopath).with_rule(is_valid_path)
 
 
 S = TypeVar("S")
 
-
+@deprecated(
+    "Use `escudeiro.misc.Caster.join` instead. This will be removed without notice in the future."
+)
 @final
 class _JoinedCast[S, T]:
     """
@@ -143,8 +131,8 @@ class _JoinedCast[S, T]:
 
         return _wrapper
 
-
-def joined_cast[T](cast: Callable[[str], T]) -> _JoinedCast[str, T]:
+@deprecated("Use `escudeiro.misc.Caster.join` instead. This will be removed without notice in the future.")
+def joined_cast[T](cast: Callable[[str], T]) -> Caster[str, T]:
     """
     Creates a joined casting function for chaining casting operations.
 
@@ -154,9 +142,9 @@ def joined_cast[T](cast: Callable[[str], T]) -> _JoinedCast[str, T]:
     Returns:
         _JoinedCast[str, T]: A `_JoinedCast` object that allows chaining casting operations.
     """
-    return _JoinedCast(cast)
+    return Caster(cast)
 
-
+@deprecated("Use `escudeiro.misc.Caster.with_rule` instead. This will be removed without notice in the future.")
 def with_rule[T](rule: Callable[[Any], bool]) -> Callable[[T], T]:
     """
     Applies a rule check on a value, raising an `InvalidEnv` exception if the rule is not satisfied.
@@ -191,9 +179,9 @@ class ArgTuple(NamedTuple):
     cast: type
 
 
-@partial(instance_is_casted, NoneType)
+@partial(Caster.isinstance_or_cast, NoneType)
 def null_cast(val: str):
-    if val.casefold() not in ("null", "none", ""):
+    if not is_none(val):
         raise InvalidCast("Null values should match ('null', 'none', '')")
     return None
 
@@ -262,7 +250,9 @@ def literal_cast(literal_decl: Any):
 
     return _cast
 
-
+@deprecated(
+    "Use `escudeiro.misc.Caster.or_` instead. This will be removed without notice in the future."
+)
 def multicast[T, U, S](
     often: Callable[[T], U], fallback: Callable[[T], S]
 ) -> Callable[[T], U | S]:

@@ -28,6 +28,7 @@ from contextlib import (
 from dataclasses import dataclass
 from datetime import date, datetime, time, tzinfo
 from time import sleep
+from types import LambdaType
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -37,8 +38,9 @@ from typing import (
     overload,
 )
 
-from escudeiro.exc.errors import ErrorGroup, RetryError
+from escudeiro.exc.errors import ErrorGroup, InvalidCast, RetryError
 from escudeiro.misc.contextx import AsyncContextWrapper, is_async_context
+from escudeiro.misc.strings import sentence, squote
 
 
 def safe_cast[V, T, D](
@@ -256,27 +258,32 @@ def make_noop[T](
 ) -> Callable[..., T] | Callable[..., Coroutine[Any, Any, T]]:
     """Creates a no-operation function that accepts any arguments and returns a fixed value.
 
-    Useful for creating placeholders, stubs, or disabling functionality temporarily.
+        Useful for creating placeholders, stubs, or disabling functionality temporarily.
 
-    Args:
-        returns: The value the function should return. Defaults to None.
-        asyncio: Whether to create an async function. Defaults to False.
+        Args:
+            returns: The value the function should return. Defaults to None.
+            asyncio: Whether to create an async function. Defaults to False.
 
-    Returns:
-        A function that ignores all arguments and returns the specified value,
-        either synchronously or asynchronously based on the asyncio parameter.
+        Returns:
+            A function that ignores all arguments and returns the specified value,
+            either synchronously or asynchronously based on the asyncio parameter.
 
-    Examples:
-        ```python
-        # Synchronous no-op
-        log_function = make_noop()
+        Examples:
+            ```python
+            # Synchronous no-op
+    @overload
+    def make_noop[T](
+        *, returns: T = None, asyncio: Literal[True]
+    ) -> Callable[..., Coroutine[Any, Any, T]]: ...
 
-        # No-op with custom return value
-        get_user = make_noop(returns={"id": 0, "name": "Guest"})
+            log_function = make_noop()
 
-        # Async no-op
-        async_operation = make_noop(asyncio=True, returns={"status": "success"})
-        ```
+            # No-op with custom return value
+            get_user = make_noop(returns={"id": 0, "name": "Guest"})
+
+            # Async no-op
+            async_operation = make_noop(asyncio=True, returns={"status": "success"})
+            ```
     """
 
     def _noop(*args: Any, **kwargs: Any) -> T:
@@ -284,6 +291,27 @@ def make_noop[T](
         return returns
 
     return _noop if not asyncio else as_async(_noop)
+
+
+def return_param[T](param: T) -> T:
+    """Returns the provided parameter without modification.
+
+    This function is a simple utility that returns the input parameter as-is.
+    It can be useful in functional programming patterns where you need to pass
+    a function that simply returns its input.
+
+    Args:
+        param: The parameter to return.
+
+    Returns:
+        The same parameter that was passed in.
+
+    Example:
+        ```python
+        value = return_param(42)  # Returns 42
+        ```
+    """
+    return param
 
 
 def do_with[**P, T](
@@ -759,8 +787,10 @@ class Retry:
                 if strategy == "temperature":
                     count = max(0, count - 1)
 
+
 UNSET = object()
 _index_pattern = re.compile(r"\[([0-9]+)\]")
+
 
 def walk_object(obj: Any, path: str) -> Any:
     """Safely retrieves a value from an object using a dot-separated path.
@@ -788,10 +818,12 @@ def walk_object(obj: Any, path: str) -> Any:
     parts = path.split(".")
     value = obj
     for part in parts:
-        if v:=_index_pattern.match(part):
+        if v := _index_pattern.match(part):
             idx = int(v.group(1))
             if TYPE_CHECKING:
-                assert isinstance(value, list | tuple), "Expected a list or tuple"
+                assert isinstance(value, list | tuple), (
+                    "Expected a list or tuple"
+                )
             value = value[idx] if len(value) > idx else UNSET
         elif isinstance(value, dict):
             value = value.get(part, UNSET)
@@ -800,3 +832,114 @@ def walk_object(obj: Any, path: str) -> Any:
         if value in (None, UNSET):
             break
     return value if value is not UNSET else None
+
+
+def isinstance_or_cast[T, Arg, U](
+    expects: type[T], onmiss: Callable[[Arg], U]
+) -> Callable[[Arg | T], T | U]:
+    """
+    Returns a decorator that checks if the value is an instance of the given type.
+    If it is, it returns the value, otherwise it calls the given callable.
+    """
+
+    @functools.wraps(onmiss)
+    def _check(value: Any) -> T | U:
+        if isinstance(value, expects):
+            return value
+        return onmiss(value)
+
+    return _check
+
+
+class Caster[U, T]:
+    def __init__(self, caster: Callable[[U], T]) -> None:
+        self._caster = caster
+
+    def __call__(self, value: U) -> T:
+        """Casts the value using the provided caster function."""
+        return self._caster(value)
+
+    def join[S](self, caster: Callable[[T], S]) -> Caster[U, S]:
+        def _join(value: U) -> S:
+            return caster(self._caster(value))
+
+        return Caster(_join)
+
+    cast = join  # Alias for join method for compatibility with _JoinedCast
+
+    def strict(self, value: U) -> T:
+        """Casts the value and raises an error if the result is None."""
+        result = self._caster(value)
+        if result is None:
+            raise InvalidCast(
+                sentence(
+                    f"Received falsy value {result} from {value} during cast"
+                ),
+                result,
+            )
+        return result
+
+    def safe[S](
+        self,
+        value: U,
+        *childof: type[Exception],
+        default: T | S = None,
+    ) -> T | S:
+        """Casts the value and returns None if the result is None, otherwise returns the result."""
+        return safe_cast(
+            self,
+            value,
+            *childof,
+            default=default,
+        )
+
+    optional = safe  # Alias for safe method for compatibility with maybe_result
+
+    def or_[S](
+        self, caster: Callable[[U], S], *childof: type[Exception]
+    ) -> Caster[U, T | S]:
+        """Returns a new caster that tries the original caster first, then the provided caster if the first fails."""
+
+        if not childof:
+            childof = (TypeError, ValueError)
+
+        def _or(value: U) -> T | S:
+            try:
+                return self._caster(value)
+            except childof:
+                return caster(value)
+
+        return Caster(_or)
+
+    @staticmethod
+    def isinstance_or_cast[Arg](
+        expects: type[T], onmiss: Callable[[Arg], U]
+    ) -> Caster[Arg | T, T | U]:
+        wrapped = isinstance_or_cast(expects, onmiss)
+        return Caster(wrapped)
+
+    def with_rule(
+        self, rule: Callable[[T], bool], rulename: str | None = None
+    ) -> Caster[U, T]:
+        """Returns a new caster that applies the given rule to the result."""
+
+        if rulename is None:
+            if isinstance(rule, LambdaType) and rule.__name__ == "<lambda>":
+                raise ValueError(
+                    "Rule name must be provided for lambda functions"
+                )
+
+            rulename = rule.__name__
+
+        def _with_rule(value: U) -> T:
+            result = self._caster(value)
+            if not rule(result):
+                raise InvalidCast(
+                    sentence(
+                        f"result {result} does not satisfy the rule {squote(rulename)}"
+                    ),
+                    result,
+                )
+            return result
+
+        return Caster(_with_rule)

@@ -85,4 +85,6 @@ dev = [
     "pytest-cov>=6.2.1",
     "pytest-xdist>=3.7.0",
     "ruff>=0.11.13",
+    "tox>=4.27.0",
+    "tox-uv>=1.26.1",
 ]
