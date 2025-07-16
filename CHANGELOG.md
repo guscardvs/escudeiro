@@ -1,3 +1,10 @@
+## 0.2.9 (2025-07-16)
+
+### Fix
+
+- implement missing monad, pathx, and string utilities; update tests for new casting and path validation logic
+- **data**: no longer considers a private field with ref as empty
+
 ## 0.2.8 (2025-06-15)
 
 ### Fix
