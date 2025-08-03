@@ -1,3 +1,9 @@
+## 0.2.11 (2025-08-03)
+
+### Fix
+
+- implement registry to support non-enumable code
+
 ## 0.2.10 (2025-07-16)
 
 ### Fix
