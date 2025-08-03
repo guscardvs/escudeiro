@@ -4,7 +4,12 @@ import msgspec
 import pytest
 from msgspec import inspect
 
-from escudeiro.contrib.msgspec import CamelStruct, PascalStruct
+from escudeiro.contrib.msgspec import (
+    CamelStruct,
+    MsgspecTransformer,
+    MsgspecTransformRegistry,
+    PascalStruct,
+)
 from escudeiro.lazyfields import lazyfield
 
 
@@ -55,3 +60,36 @@ def test_struct_support_lazyfields():
                 return f"{self.name} {self.surname}"
 
         _ = Person
+
+
+def test_msgspec_transformer_caches_decode():
+    class Person(msgspec.Struct):
+        name: str
+        age: int
+
+    transformer = MsgspecTransformer(Person)
+
+    # Call the transformer to ensure it works
+    person_instance = transformer()({"name": "John", "age": 30})
+    assert isinstance(person_instance, Person)
+    assert person_instance.name == "John"
+    assert person_instance.age == 30
+
+
+def test_msgspec_transform_registry_registers_transformer():
+    class Person(msgspec.Struct):
+        name: str
+        age: int
+
+    registry = MsgspecTransformRegistry()
+
+    registered_transformer = registry.require_decoder(Person)
+
+    # Use the transformer to decode a message
+    person_instance = registry.require_decoder(Person)(
+        {"name": "Alice", "age": 25}
+    )
+    assert isinstance(person_instance, Person)
+    assert person_instance.name == "Alice"
+    assert person_instance.age == 25
+    assert registry.lookup(Person) is registered_transformer

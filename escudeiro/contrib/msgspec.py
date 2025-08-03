@@ -3,8 +3,10 @@ from typing import Any, Literal, overload
 
 import msgspec
 
+from escudeiro.ds.registry import Transformer, TransformRegistry
 from escudeiro.lazyfields import lazy
 from escudeiro.misc import filter_isinstance, next_or, strings
+from escudeiro.misc.functions import isinstance_or_cast
 
 
 class SquireStruct(msgspec.Struct):
@@ -49,3 +51,25 @@ class PascalStruct(SquireStruct, rename=strings.to_pascal):
 
 class CamelStruct(SquireStruct, rename=strings.to_camel):
     pass
+
+
+class MsgspecTransformer[T]:
+    def __init__(self, cls: type[T]):
+        self._cls = cls
+        self._decoder = msgspec.json.Decoder(cls)
+        self._decode = isinstance_or_cast(cls, self._decoder.decode)
+
+    def __call__(self) -> Transformer[T]:
+        def transformer(value: Any) -> T:
+            return (
+                self._decode(value)
+                if isinstance(value, str | bytes)
+                else msgspec.convert(value, self._cls)
+            )
+
+        return transformer
+
+
+class MsgspecTransformRegistry(TransformRegistry):
+    def require_decoder[T](self, cls: type[T]) -> Transformer[T]:
+        return super().require(cls, MsgspecTransformer(cls))

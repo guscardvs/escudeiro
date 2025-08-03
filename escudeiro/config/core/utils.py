@@ -2,9 +2,9 @@ import contextlib
 from collections.abc import Callable
 from enum import Enum
 from functools import partial, wraps
-from pathlib import Path
 from types import NoneType
 from typing import Any, Literal, NamedTuple, TypeVar, final
+
 from typing_extensions import deprecated
 
 from escudeiro.exc import (
@@ -14,8 +14,8 @@ from escudeiro.exc import (
     StrictCast,
 )
 from escudeiro.misc import sentence
-from escudeiro.misc.functions import Caster, isinstance_or_cast
-from escudeiro.misc.pathx import autopath, is_valid_link, is_valid_path
+from escudeiro.misc.functions import Caster
+from escudeiro.misc.pathx import autopath, is_valid_path
 from escudeiro.misc.strings import as_boolean, is_none
 
 

@@ -1,9 +1,10 @@
 from collections.abc import Callable
 from enum import Enum
+from typing import Any
 
 import pytest
 
-from escudeiro.ds.registry import CallableRegistry, Registry
+from escudeiro.ds.registry import CallableRegistry, Registry, TransformRegistry
 from escudeiro.exc.errors import AlreadySet, MissingName
 from escudeiro.misc import ValueEnum
 
@@ -118,6 +119,7 @@ def test_callable_registry_decorator_usage():
     assert reg.lookup(FuncEnum.FOO)() == "foo"
     assert reg.lookup(FuncEnum.BAR)() == "bar"
 
+
 def test_registry_checks_for_collision():
     reg = Registry(with_enum=Color)
     reg.register(Color.RED, 1)
@@ -125,3 +127,76 @@ def test_registry_checks_for_collision():
         reg.register(Color.RED, 2)  # Should raise AlreadySet error
     with pytest.raises(MissingName):
         reg.lookup(Color.BLUE)  # Should raise MissingName error
+
+
+def test_transform_registry_register_and_lookup():
+    registry = TransformRegistry()
+
+    class Example:
+        def __init__(self, value: Any) -> None:
+            self.value = value
+
+    def example_transformer(value: Any) -> Example:
+        return Example(value)
+
+    registry.register(Example, example_transformer)
+
+    transformer = registry.lookup(Example)
+    assert isinstance(transformer, Callable)
+    example_instance = transformer("test")
+    assert isinstance(example_instance, Example)
+    assert example_instance.value == "test"
+
+
+def test_transform_registry_raises_missing_name():
+    registry = TransformRegistry()
+
+    class Example:
+        pass
+
+    with pytest.raises(MissingName):
+        _ = registry.lookup(Example)  # Should raise MissingName error
+
+
+def test_transform_registry_raises_already_set():
+    registry = TransformRegistry()
+
+    class Example:
+        pass
+
+    def example_transformer(value: Any) -> Example:
+        return Example()
+
+    registry.register(Example, example_transformer)
+
+    with pytest.raises(AlreadySet):
+        registry.register(
+            Example, example_transformer
+        )  # Should raise AlreadySet error
+
+
+def test_transform_registry_registers_multiple_transformers():
+    registry = TransformRegistry()
+
+    class ExampleA:
+        def __init__(self, value: Any) -> None:
+            self.value = value
+
+    class ExampleB:
+        def __init__(self, value: Any) -> None:
+            self.value = value
+
+    def example_a_transformer(value: Any) -> ExampleA:
+        return ExampleA(value)
+
+    def example_b_transformer(value: Any) -> ExampleB:
+        return ExampleB(value)
+
+    registry.register(ExampleA, example_a_transformer)
+    registry.register(ExampleB, example_b_transformer)
+
+    a_transformer = registry.lookup(ExampleA)
+    b_transformer = registry.lookup(ExampleB)
+
+    assert isinstance(a_transformer("test_a"), ExampleA)
+    assert isinstance(b_transformer("test_b"), ExampleB)

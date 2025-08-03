@@ -1,5 +1,6 @@
 from collections.abc import Callable
 from enum import Enum
+from typing import Any, Protocol
 
 from escudeiro.data import data, private
 from escudeiro.exc.errors import AlreadySet, MissingName
@@ -30,7 +31,6 @@ class Registry[T: Enum, S]:
     with_enum: type[T]
     registry: dict[T, S] = private(initial_factory=dict)
 
-
     def register(self, key: T, value: S) -> S:
         if key in self.registry:
             raise AlreadySet(f"Key '{key.value}' is already registered.")
@@ -59,10 +59,11 @@ class Registry[T: Enum, S]:
     def __iter__(self):
         """Iterates over the registry keys."""
         return iter(map(str, self.registry))
-    
+
     def __len__(self):
         """Returns the number of items in the registry."""
         return len(self.registry)
+
 
 @data(frozen=False)
 class CallableRegistry[T: Enum, S: Callable](Registry[T, S]):
@@ -88,12 +89,43 @@ class CallableRegistry[T: Enum, S: Callable](Registry[T, S]):
 
     prefix: str = ""
     use_enum_name_as_prefix: bool = True
+
     def __post_init__(self):
         if self.use_enum_name_as_prefix and not self.prefix:
             self.prefix = to_snake(self.with_enum.__name__) + "_"
-
 
     def __call__(self, func: S) -> S:
         return self.register(
             self.with_enum(func.__name__.removeprefix(self.prefix)), func
         )
+
+
+class Transformer[T](Protocol):
+    def __call__(self, value: Any) -> T: ...
+
+
+@data(frozen=False)
+class TransformRegistry:
+    registry: dict[type, Transformer] = private(initial_factory=dict)
+
+    def register[T](self, cls: type[T], transformer: Transformer[T]) -> None:
+        if cls in self.registry:
+            raise AlreadySet(
+                f"Transformer for {cls.__name__} is already registered."
+            )
+        self.registry[cls] = transformer
+
+    def lookup[T](self, cls: type[T]) -> Transformer[T]:
+        if cls not in self.registry:
+            raise MissingName(f"No transformer registered for {cls.__name__}.")
+        return self.registry[cls]
+
+    def require[T](
+        self, cls: type[T], transformer_factory: Callable[[], Transformer[T]]
+    ) -> Transformer[T]:
+        if cls not in self.registry:
+            self.register(cls, transformer_factory())
+        return self.registry[cls]
+
+    def __getitem__[T](self, cls: type[T]) -> Transformer[T]:
+        return self.lookup(cls)

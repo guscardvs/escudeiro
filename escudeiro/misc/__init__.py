@@ -11,6 +11,7 @@ from escudeiro.misc.enumsx import (
     ValueEnum,
 )
 from escudeiro.misc.functions import (
+    Caster,
     FrozenCoroutine,
     Retry,
     as_async,
@@ -19,7 +20,6 @@ from escudeiro.misc.functions import (
     asafe_cast,
     asyncdo_with,
     cache,
-    Caster,
     call_once,
     do_with,
     isinstance_or_cast,
