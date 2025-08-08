@@ -112,7 +112,7 @@ wheels = [
 
 [[package]]
 name = "escudeiro"
-version = "0.2.11"
+version = "0.2.12"
 source = { editable = "." }
 dependencies = [
     { name = "orjson" },

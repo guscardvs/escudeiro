@@ -1,3 +1,9 @@
+## 0.2.12 (2025-08-08)
+
+### Fix
+
+- add is_instanceexact function and corresponding tests
+
 ## 0.2.11 (2025-08-03)
 
 ### Fix
