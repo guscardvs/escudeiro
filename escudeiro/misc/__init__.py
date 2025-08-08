@@ -81,7 +81,7 @@ from escudeiro.misc.strings import (
     wrap,
 )
 from escudeiro.misc.timezone import TimeZone, now, today
-from escudeiro.misc.typex import is_hashable
+from escudeiro.misc.typex import is_hashable, is_instanceexact
 
 __all__ = [
     "aall",
@@ -127,6 +127,7 @@ __all__ = [
     "is_async_context",
     "is_extension",
     "is_hashable",
+    "is_instanceexact",
     "is_none",
     "is_valid_link",
     "is_valid_path",

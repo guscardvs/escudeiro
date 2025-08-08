@@ -35,3 +35,22 @@ def is_hashable(annotation: Any) -> TypeIs[Hashable]:
             return False
         cache.add(current)
     return True
+
+
+def is_instanceexact(obj: Any, annotation: Any) -> bool:
+    """Check if `obj` is an instance of `annotation`, considering type aliases and unions.
+    If `annotation` is a type alias, it resolves to its value.
+    If `annotation` is a union, it checks if `obj` is an instance of any of the types in the union.
+
+    This is different from `isinstance` because it does not consider subclasses.
+    For example, `is_instanceexact(1, int)` returns `True`, but `isinstance(1, int)` would also return `True` for subclasses of `int`.
+    """
+    if isinstance(annotation, TypeAliasType):
+        annotation = annotation.__value__
+
+    if isinstance(annotation, UnionType):
+        return any(is_instanceexact(obj, arg) for arg in get_args(annotation))
+    if isinstance(annotation, GenericAlias):
+        annotation = get_origin(annotation) or annotation.__origin__
+
+    return type(obj) is annotation

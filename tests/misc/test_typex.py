@@ -2,7 +2,7 @@ from typing import Annotated, Any, Literal, override
 
 import pytest
 
-from escudeiro.misc.typex import is_hashable
+from escudeiro.misc.typex import is_hashable, is_instanceexact
 
 
 class TestIsHashable:
@@ -89,3 +89,52 @@ class TestIsHashable:
     # ==== Optional Ellipsis corner case ====
     def test_ellipsis_is_ignored(self):
         assert is_hashable(None | tuple[int, ...])
+
+
+class TestIsInstanceexact:
+    @pytest.mark.parametrize(
+        "obj, annotation, expected",
+        [
+            (1, int, True),
+            (1.0, float, True),
+            ("test", str, True),
+            (None, type(None), True),
+            (1, int | str, True),
+            (1.0, int | str, False),
+            ("test", int | str, True),
+            ([1, 2], list[int], True),
+            (frozenset([1]), frozenset[int], True),
+        ],
+        ids=[
+            "int_exact",
+            "float_exact",
+            "str_exact",
+            "none_exact",
+            "int_or_str_match_int",
+            "int_or_str_mismatch_float",
+            "int_or_str_match_str",
+            "list_not_instanceexact",
+            "frozenset_exact",
+        ],
+    )
+    def test_is_instanceexact(self, obj: Any, annotation: Any, expected: bool):
+        assert is_instanceexact(obj, annotation) == expected
+
+    def test_does_not_match_for_subclasses(self):
+        class Base:
+            pass
+
+        class Derived(Base):
+            pass
+
+        assert is_instanceexact(Derived(), Base) is False
+        assert is_instanceexact(Base(), Base) is True
+        assert is_instanceexact(Derived(), Derived) is True
+
+    def test_union_type_handling(self):
+        class CustomType:
+            pass
+
+        assert is_instanceexact(CustomType(), CustomType | int) is True
+        assert is_instanceexact(1, CustomType | int) is True
+        assert is_instanceexact("test", CustomType | int) is False
