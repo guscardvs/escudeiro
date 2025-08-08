@@ -4,6 +4,7 @@ import asyncio
 import contextlib
 from collections.abc import AsyncIterable, Callable
 from datetime import UTC, date, datetime, time
+from decimal import Decimal
 from functools import partial
 from typing import Any, NoReturn, Self
 from unittest.mock import AsyncMock, MagicMock, Mock, call, patch
@@ -12,6 +13,7 @@ import pytest
 
 from escudeiro.exc.errors import ErrorGroup, InvalidCast, RetryError
 from escudeiro.misc import (
+    Caster,
     FrozenCoroutine,
     Retry,
     as_async,
@@ -22,14 +24,14 @@ from escudeiro.misc import (
     cache,
     call_once,
     do_with,
+    isinstance_or_cast,
     join_into_datetime,
     make_noop,
     raise_insteadof,
     safe_cast,
     walk_object,
-    Caster,
-    isinstance_or_cast,
 )
+from escudeiro.misc.functions import awrap_result_with, wrap_result_with
 from escudeiro.misc.iterx import filter_isinstance, next_or
 from escudeiro.misc.strings import sentence, squote
 
@@ -735,7 +737,9 @@ class TestRetryACall:
         mock.assert_called_once_with(3)
 
     @patch("asyncio.sleep")
-    async def test_retry_does_proper_backoff_as_expected(self, mock: MagicMock):
+    async def test_retry_does_proper_backoff_as_expected(
+        self, mock: MagicMock
+    ):
         retrier = Retry(signal=ValueError, delay=3, backoff=2)
         counter = 0
 
@@ -1152,7 +1156,9 @@ class TestCaster:
         with pytest.raises(ValueError) as exc_info:
             _ = caster(value)
 
-        assert str(exc_info.value) == "could not convert string to float: 'abc'"
+        assert (
+            str(exc_info.value) == "could not convert string to float: 'abc'"
+        )
 
     def test_caster_isinstance_or_cast_success(self):
         class Custom:
@@ -1255,7 +1261,9 @@ class TestCaster:
             _ = caster.with_rule(rule, rulename)(value)
 
         assert exc_info.value.args == (
-            sentence(f"result 123 does not satisfy the rule {squote(rulename)}"),
+            sentence(
+                f"result 123 does not satisfy the rule {squote(rulename)}"
+            ),
             123,
         )
 
@@ -1271,6 +1279,140 @@ class TestCaster:
             _ = caster.with_rule(lambda x: x < 100, rulename)(value)
 
         assert exc_info.value.args == (
-            sentence(f"result 123 does not satisfy the rule {squote(rulename)}"),
+            sentence(
+                f"result 123 does not satisfy the rule {squote(rulename)}"
+            ),
             123,
+        )
+
+
+class TestWrapResultWith:
+    def test_wrap_result_with_success(self):
+        mock = MagicMock(return_value=42)
+
+        @wrap_result_with(mock, MagicMock)
+        def process(value: str) -> int:
+            return int(value)
+
+        result = process("123")
+
+        assert result == 42
+        mock.assert_called_once_with(123)
+        assert process.__annotations__["return"] == MagicMock
+
+    def test_wrap_result_with_success_with_valid_function(self):
+        @wrap_result_with(Decimal)
+        def process(value: str) -> int:
+            return int(value)
+
+        result = process("123")
+
+        assert result == Decimal(123)
+        assert process.__annotations__["return"] == Decimal
+
+    def test_wrap_result_with_failure(self):
+        mock = MagicMock(side_effect=ValueError("Invalid value"))
+
+        @wrap_result_with(mock, MagicMock)
+        def process(value: str) -> int:
+            return int(value)
+
+        with pytest.raises(ValueError, match="Invalid value"):
+            process("123")
+
+        mock.assert_called_once_with(123)
+        assert process.__annotations__["return"] == MagicMock
+
+    def test_wrap_result_introspects_correctly(self):
+        @wrap_result_with(Decimal)
+        def process(value: str) -> int:
+            return int(value)
+
+        def another_wrapper(value: str) -> Decimal:
+            return Decimal(value)
+
+        @wrap_result_with(another_wrapper)
+        def process_with_function():
+            return "123"
+
+        class AnotherWrapper:
+            def __call__(self, value: str) -> Decimal:
+                return Decimal(value)
+
+        @wrap_result_with(AnotherWrapper())
+        def process_with_class():
+            return "123"
+
+        assert process.__annotations__["value"] is str, (
+            "Parameter should not be wrapped"
+        )
+        assert process.__annotations__["return"] is Decimal, (
+            "Should use the annotation from the type"
+        )
+        assert process_with_function.__annotations__["return"] is Decimal, (
+            "Should use the annotation from the function annotation"
+        )
+        assert process_with_class.__annotations__["return"] is Decimal, (
+            "Should use the annotation from the annotation of the method"
+        )
+
+
+class TestAWrapResultWith:
+    async def test_awrap_result_with_success(self):
+        mock = AsyncMock(return_value=42)
+
+        @awrap_result_with(mock, AsyncMock)
+        async def process(value: str) -> int:
+            return int(value)
+
+        result = await process("123")
+
+        assert result == 42
+        mock.assert_called_once_with(123)
+        assert process.__annotations__["return"] == AsyncMock
+
+    async def test_awrap_result_with_success_with_valid_function(self):
+        @awrap_result_with(as_async(Decimal), Decimal)
+        async def process(value: str) -> int:
+            return int(value)
+
+        result = await process("123")
+
+        assert result == Decimal(123)
+        assert process.__annotations__["return"] == Decimal
+
+    async def test_awrap_result_with_failure(self):
+        mock = AsyncMock(side_effect=ValueError("Invalid value"))
+
+        @awrap_result_with(mock, AsyncMock)
+        async def process(value: str) -> int:
+            return int(value)
+
+        with pytest.raises(ValueError, match="Invalid value"):
+            await process("123")
+
+        mock.assert_called_once_with(123)
+        assert process.__annotations__["return"] == AsyncMock
+
+    async def test_awrap_result_introspects_correctly(self):
+        async def another_wrapper(value: str) -> Decimal:
+            return Decimal(value)
+
+        @awrap_result_with(another_wrapper)
+        async def process_with_function() -> str:
+            return "123"
+
+        class AnotherWrapper:
+            async def __call__(self, value: str) -> Decimal:
+                return Decimal(value)
+
+        @awrap_result_with(AnotherWrapper())
+        async def process_with_class():
+            return "123"
+
+        assert process_with_function.__annotations__["return"] is Decimal, (
+            "Should use the annotation from the function annotation"
+        )
+        assert process_with_class.__annotations__["return"] is Decimal, (
+            "Should use the annotation from the annotation of the method"
         )

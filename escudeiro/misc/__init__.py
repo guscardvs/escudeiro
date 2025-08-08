@@ -28,6 +28,8 @@ from escudeiro.misc.functions import (
     raise_insteadof,
     safe_cast,
     walk_object,
+    wrap_result_with,
+    awrap_result_with,
 )
 from escudeiro.misc.iterx import (
     aall,
@@ -81,7 +83,12 @@ from escudeiro.misc.strings import (
     wrap,
 )
 from escudeiro.misc.timezone import TimeZone, now, today
-from escudeiro.misc.typex import is_hashable, is_instanceexact
+from escudeiro.misc.typex import (
+    assert_notnone,
+    cast_notnone,
+    is_hashable,
+    is_instanceexact,
+)
 
 __all__ = [
     "aall",
@@ -100,12 +107,14 @@ __all__ = [
     "as_boolean",
     "as_datetime",
     "asafe_cast",
+    "assert_notnone",
     "astarmap",
     "AsyncContextWrapper",
     "asyncdo_with",
     "autopath",
     "cache",
     "Caster",
+    "cast_notnone",
     "call_once",
     "CamelEnum",
     "carrymap",
@@ -162,4 +171,6 @@ __all__ = [
     "ValueEnum",
     "walk_object",
     "wrap",
+    "wrap_result_with",
+    "awrap_result_with",
 ]

@@ -1,6 +1,6 @@
 from collections.abc import Hashable
 from types import GenericAlias, UnionType
-from typing import Annotated, Any, TypeAliasType, get_args, get_origin
+from typing import Annotated, Any, TypeAliasType, cast, get_args, get_origin
 
 from typing_extensions import TypeIs
 
@@ -54,3 +54,13 @@ def is_instanceexact(obj: Any, annotation: Any) -> bool:
         annotation = get_origin(annotation) or annotation.__origin__
 
     return type(obj) is annotation
+
+
+def cast_notnone[T](value: T | None) -> T:
+    return cast(T, value)
+
+
+def assert_notnone[T](value: T | None) -> T:
+    if value is None:
+        raise ValueError("Value is None")
+    return value

@@ -2,7 +2,12 @@ from typing import Annotated, Any, Literal, override
 
 import pytest
 
-from escudeiro.misc.typex import is_hashable, is_instanceexact
+from escudeiro.misc.typex import (
+    assert_notnone,
+    cast_notnone,
+    is_hashable,
+    is_instanceexact,
+)
 
 
 class TestIsHashable:
@@ -138,3 +143,23 @@ class TestIsInstanceexact:
         assert is_instanceexact(CustomType(), CustomType | int) is True
         assert is_instanceexact(1, CustomType | int) is True
         assert is_instanceexact("test", CustomType | int) is False
+
+
+class TestAssertNotNone:
+    def test_assert_notnone_with_value(self):
+        assert assert_notnone(5) == 5
+        assert assert_notnone("hello") == "hello"
+
+    def test_assert_notnone_with_none(self):
+        with pytest.raises(ValueError, match="Value is None"):
+            assert_notnone(None)
+
+
+class TestCastNotNone:
+    def test_cast_notnone_with_value(self):
+        assert cast_notnone(5) == 5
+        assert cast_notnone("hello") == "hello"
+
+    def test_cast_notnone_with_none(self):
+        assert cast_notnone(None) is None, "cast_notnone does not raise, just casts"
+    

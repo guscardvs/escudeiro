@@ -28,12 +28,13 @@ from contextlib import (
 from dataclasses import dataclass
 from datetime import date, datetime, time, tzinfo
 from time import sleep
-from types import LambdaType
+from types import FunctionType, LambdaType, MethodType
 from typing import (
     TYPE_CHECKING,
     Any,
     Concatenate,
     Literal,
+    cast,
     final,
     overload,
 )
@@ -572,7 +573,9 @@ class Retry:
     backoff: float = 1  # multiplier for delay
 
     def get_signal(self) -> tuple[type[Exception], ...]:
-        return self.signal if isinstance(self.signal, tuple) else (self.signal,)
+        return (
+            self.signal if isinstance(self.signal, tuple) else (self.signal,)
+        )
 
     def __call__[**P, T](self, func: Callable[P, T]) -> Callable[P, T]:
         """
@@ -852,18 +855,29 @@ def isinstance_or_cast[T, Arg, U](
 
 
 class Caster[U, T]:
-    def __init__(self, caster: Callable[[U], T]) -> None:
+    def __init__(
+        self, caster: Callable[[U], T], name: str | None = None
+    ) -> None:
         self._caster = caster
+        self._name = cast(
+            str, name or getattr(caster, "__name__", type(self).__name__)
+        )
 
     def __call__(self, value: U) -> T:
         """Casts the value using the provided caster function."""
         return self._caster(value)
 
+    def __name__(self) -> str:
+        return self._name
+
     def join[S](self, caster: Callable[[T], S]) -> Caster[U, S]:
         def _join(value: U) -> S:
             return caster(self._caster(value))
 
-        return Caster(_join)
+        return Caster(
+            _join,
+            name=f"{self._name}.join({getattr(caster, '__name__', type(caster).__name__)})",
+        )
 
     cast = join  # Alias for join method for compatibility with _JoinedCast
 
@@ -893,7 +907,25 @@ class Caster[U, T]:
             default=default,
         )
 
-    optional = safe  # Alias for safe method for compatibility with maybe_result
+    optional = (
+        safe  # Alias for safe method for compatibility with maybe_result
+    )
+
+    def safe_cast(
+        self,
+        child_of: Collection[type[Exception]] = (),
+        extend_child_of: bool = True,
+    ):
+        if extend_child_of:
+            child_of = [TypeError, ValueError, *child_of]
+
+        def _safe_cast(value: U) -> T | None:
+            return safe_cast(self._caster, value, *child_of, default=None)
+
+        return Caster(
+            _safe_cast,
+            name=f"{self._name}.safe_cast",
+        )
 
     def or_[S](
         self, caster: Callable[[U], S], *childof: type[Exception]
@@ -909,7 +941,10 @@ class Caster[U, T]:
             except childof:
                 return caster(value)
 
-        return Caster(_or)
+        return Caster(
+            _or,
+            name=f"{self._name}.or_({getattr(caster, '__name__', type(caster).__name__)})",
+        )
 
     @staticmethod
     def isinstance_or_cast[Arg](
@@ -942,4 +977,109 @@ class Caster[U, T]:
                 )
             return result
 
-        return Caster(_with_rule)
+        return Caster(_with_rule, name=f"{self._name}.with_rule({rulename})")
+
+
+def _extract_return_type(
+    wrapper: Callable[[Any], Any],
+    return_type: type[Any] | None,
+) -> type[Any] | None:
+    if return_type is not None:
+        return return_type
+    elif isinstance(wrapper, MethodType):
+        return getattr(wrapper.__func__, "__annotations__", {}).get(
+            "return", None
+        )
+    elif isinstance(wrapper, FunctionType):
+        return getattr(wrapper, "__annotations__", {}).get("return", None)
+    elif callable(wrapper) and not isinstance(wrapper, type):
+        annotated = wrapper.__call__
+        return getattr(annotated, "__annotations__", {}).get("return", None)
+    elif isinstance(wrapper, type):  # pyright: ignore[reportUnnecessaryIsInstance]
+        return wrapper
+    else:
+        return Any  # pyright: ignore[reportUnreachable]
+
+
+def wrap_result_with[**P, T, U](
+    wrapper: Callable[[T], U],
+    return_type: type[U] | None = None,
+) -> Callable[[Callable[P, T]], Callable[P, U]]:
+    """
+    Decorator factory that wraps the result of a function with a specified wrapper.
+    This decorator modifies the return value of the decorated function by passing it
+    through the provided `wrapper` callable. Optionally, it can update the function's
+    return type annotation.
+    Args:
+        wrapper (Callable[[T], U]): A callable that takes the original return value
+            and returns the wrapped value.
+        return_type (type[U] | None, optional): The type to set as the return annotation
+            for the decorated function. If None, attempts to infer from the wrapper.
+    Returns:
+        Callable[[Callable[P, T]], Callable[P, U]]: A decorator that wraps the result
+        of the target function with `wrapper`.
+    Example:
+        >>> @wrap_result_with(str)
+        ... def get_number() -> int:
+        ...     return 42
+        >>> get_number()
+        '42'
+    """
+
+    def _wrap(func: Callable[P, T]) -> Callable[P, U]:
+        func.__annotations__["return"] = _extract_return_type(
+            wrapper, return_type
+        )
+
+        @functools.wraps(func)
+        def __wrap(*args: P.args, **kwargs: P.kwargs) -> U:
+            result = func(*args, **kwargs)
+            return wrapper(result)
+
+        return __wrap
+
+    return _wrap
+
+
+def awrap_result_with[**P, T, U](
+    wrapper: Callable[[T], Coroutine[Any, Any, U]],
+    return_type: type[U] | None = None,
+) -> Callable[
+    [Callable[P, Coroutine[Any, Any, T]]], Callable[P, Coroutine[Any, Any, U]]
+]:
+    """
+    Decorator factory that wraps the result of an asynchronous function with a specified wrapper.
+    This decorator modifies the return value of the decorated asynchronous function by passing it
+    through the provided `wrapper` callable, which must return an awaitable. Optionally, it can update the function's
+    return type annotation.
+    Args:
+        wrapper (Callable[[T], Awaitable[U]]): A callable that takes the original return value
+            and returns an awaitable that resolves to the wrapped value.
+        return_type (type[U] | None, optional): The type to set as the return annotation
+            for the decorated function. If None, attempts to infer from the wrapper.
+    Returns:
+        Callable[[Callable[P, T]], Callable[P, Coroutine[Any, Any, U]]]:
+            A decorator that wraps the result of the target asynchronous function with `wrapper`.
+    Example:
+        >>> @awrap_result_with(lambda x: asyncio.sleep(0.1, result=str(x)))
+        ... async def get_number() -> int:
+        ...     return 42
+        >>> await get_number()
+        '42'
+    """
+
+    def _wrap(
+        func: Callable[P, Coroutine[Any, Any, T]],
+    ) -> Callable[P, Coroutine[Any, Any, U]]:
+        func.__annotations__["return"] = _extract_return_type(
+            wrapper, return_type
+        )
+
+        @functools.wraps(func)
+        async def __wrap(*args: P.args, **kwargs: P.kwargs) -> U:
+            result = await func(*args, **kwargs)
+            return await wrapper(result)
+
+        return __wrap
+
+    return _wrap

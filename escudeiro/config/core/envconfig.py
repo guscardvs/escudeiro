@@ -6,8 +6,6 @@ from typing import Any, override
 
 from escudeiro.config.concepts import Env
 from escudeiro.config.core.utils import (
-    maybe_result,
-    multicast,
     none_is_missing,
     null_cast,
     valid_path,
@@ -15,7 +13,9 @@ from escudeiro.config.core.utils import (
 from escudeiro.config.interface import MISSING, default_cast
 from escudeiro.data import call_init, data, field
 from escudeiro.exc import SquireError
+from escudeiro.exc.errors import MissingName
 from escudeiro.lazyfields import lazyfield
+from escudeiro.misc.functions import Caster
 
 from .config import Config
 from .mapping import DEFAULT_MAPPING, EnvMapping
@@ -125,9 +125,9 @@ class EnvConfig(Config):
             Env | None: The current environment.
         """
 
-        caster = none_is_missing(multicast(self.env_cast, null_cast))
+        caster = none_is_missing(Caster(self.env_cast).or_(null_cast))
         if not self.strict:
-            caster = maybe_result(caster).optional
+            caster = Caster(caster).safe_cast((MissingName,))
         try:
             result = Config.get(
                 self,
@@ -187,7 +187,7 @@ class EnvConfig(Config):
         if dotfile_path := Config.get(
             self,
             "CONFIG_DOTFILE",
-            maybe_result(valid_path).optional,
+            Caster(valid_path).optional,
             None,
         ):
             if dotfile_path.exists():
