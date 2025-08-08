@@ -1,3 +1,9 @@
+## 0.2.13 (2025-08-08)
+
+### Fix
+
+- enhance type casting utilities and add new tests for assert_notnone and cast_notnone
+
 ## 0.2.12 (2025-08-08)
 
 ### Fix
