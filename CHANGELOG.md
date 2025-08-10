@@ -1,3 +1,9 @@
+## 0.2.14 (2025-08-10)
+
+### Fix
+
+- add configuration context management with get_config, set_config, and get_env functions
+
 ## 0.2.13 (2025-08-08)
 
 ### Fix
