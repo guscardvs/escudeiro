@@ -1,3 +1,9 @@
+## 0.2.15 (2025-08-11)
+
+### Refactor
+
+- streamline code formatting and enhance task scheduler setup
+
 ## 0.2.14 (2025-08-10)
 
 ### Fix
