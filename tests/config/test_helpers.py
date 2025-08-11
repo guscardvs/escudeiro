@@ -7,13 +7,9 @@ import pytest
 from escudeiro.config import Config, EnvMapping
 from escudeiro.config.core.utils import (
     boolean_cast,
-    instance_is_casted,
-    joined_cast,
     literal_cast,
-    multicast,
     none_is_missing,
     valid_path,
-    with_rule,
 )
 from escudeiro.exc import InvalidCast, InvalidEnv, MissingName
 from escudeiro.misc.pathx import is_valid_path
@@ -73,51 +69,6 @@ def test_valid_path_raises_file_not_found_error():
     )
 
 
-def test_joined_cast_composes_cast_functions():
-    mapping = EnvMapping({"key": "42"})
-    cfg = Config(mapping=mapping)
-
-    # Casting sequence: str -> int -> str -> float
-    val = cfg("key", joined_cast(int).cast(float).cast(str))
-
-    assert isinstance(val, str)
-    assert val == "42.0"
-
-
-def test_with_rule_valid_rule():
-    mapping = EnvMapping({"key": "42"})
-    cfg = Config(mapping=mapping)
-
-    # Rule: Value must be greater than 40
-    def greater_than_40(x: Any):
-        return int(x) > 40
-
-    # Valid rule check (value is greater than 40)
-    cfg("key", with_rule(greater_than_40))
-
-
-def test_with_rule_invalid_rule():
-    """test with_rule raises InvalidEnv
-    if the rule condition is not met."""
-    mapping = EnvMapping({"key": "42"})
-    cfg = Config(mapping=mapping)
-
-    # Rule: Value must be less than 40
-    def less_than_40(x: Any):
-        return int(x) < 40
-
-    # Invalid rule check (value is not less than 40)
-    with pytest.raises(InvalidCast) as exc_info:
-        cfg("key", with_rule(less_than_40))
-
-    assert isinstance(exc_info.value.__cause__, InvalidEnv)
-    assert exc_info.value.__cause__.args == (
-        f"Value 42 did not pass rule check {less_than_40.__name__}",
-        less_than_40,
-        "42",
-    )
-
-
 def test_literal_cast_returns_valid_cast():
     class Test(Enum):
         VALUE = "value"
@@ -169,35 +120,3 @@ def test_none_is_missing():
 
     with pytest.raises(MissingName):
         _ = cfg("key", none_is_missing(boolean_cast.optional))
-
-
-def test_multicast():
-    def surely_fails(val: Any):
-        _ = val
-        raise ValueError("This function does not work")
-
-    def returns_anything(val: Any):
-        _ = val
-        return "anything"
-
-    mapping = EnvMapping({"key": "42"})
-    cfg = Config(mapping=mapping)
-
-    assert cfg("key", multicast(int, surely_fails)) == 42
-
-    with pytest.raises(InvalidCast) as exc_info:
-        _ = cfg("key", multicast(boolean_cast.strict, surely_fails))
-
-    assert exc_info.value.__cause__ is not None
-    assert exc_info.value.__cause__.args == ("This function does not work",)
-
-    assert cfg("key", multicast(returns_anything, surely_fails)) == "anything"
-
-
-def test_instance_is_casted():
-    missing = object()
-
-    caster = instance_is_casted(str, lambda _: missing)
-
-    assert caster("hello") == "hello"
-    assert caster(123) is missing

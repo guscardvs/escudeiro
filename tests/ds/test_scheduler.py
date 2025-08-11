@@ -1,6 +1,7 @@
 # pyright: reportPrivateUsage=false
 # pyright: reportFunctionMemberAccess=false
 import asyncio
+from contextlib import aclosing
 import datetime
 import uuid
 from typing import Any
@@ -34,21 +35,18 @@ def sample_cron_info():
 @pytest.fixture
 async def scheduler_with_mock_manager():
     # Create a scheduler with a mocked TaskManager
-    scheduler = TaskScheduler()
-    scheduler.manager = MagicMock()
-    scheduler.manager.spawn = AsyncMock()
-    scheduler.manager.close = AsyncMock()
+    async with aclosing(TaskScheduler()) as scheduler:
+        await scheduler.setup()
+        scheduler.manager = MagicMock(wraps=scheduler.manager)
+        scheduler.manager.spawn = MagicMock(wraps=scheduler.manager.spawn)
+        scheduler.manager.close = MagicMock(wraps=scheduler.manager.close)
 
-    # Create mocked logging functions that track calls
-    scheduler.log_info = MagicMock()
-    scheduler.log_warning = MagicMock()
-    scheduler.log_exception = MagicMock()
+        # Create mocked logging functions that track calls
+        scheduler.log_info = MagicMock()
+        scheduler.log_warning = MagicMock()
+        scheduler.log_exception = MagicMock()
 
-    yield scheduler
-
-    # Cleanup
-    if scheduler._running:
-        await scheduler.stop()
+        yield scheduler
 
 
 # Basic Task Tests
@@ -188,7 +186,9 @@ class TestTaskScheduler:
         assert scheduler._tasks[task_id].name == "test-one-time-task"
         assert scheduler._tasks[task_id].cron is None
         assert (
-            abs((scheduler._tasks[task_id].next_run - run_time).total_seconds())
+            abs(
+                (scheduler._tasks[task_id].next_run - run_time).total_seconds()
+            )
             < 1
         )  # Almost equal
 
@@ -583,7 +583,8 @@ class TestTaskScheduler:
             id_="test-id",
             func=mock_func,
             cron=None,
-            next_run=timezone.now() - datetime.timedelta(seconds=1),  # Past due
+            next_run=timezone.now()
+            - datetime.timedelta(seconds=1),  # Past due
             name="test-task",
         )
         scheduler._tasks["test-id"] = task
@@ -609,7 +610,9 @@ class TestTaskScheduler:
         TaskScheduler._calculate_and_sleep = _original_calc
         Task.status = _task_status
 
-    async def test_start_stop(self, scheduler_with_mock_manager: TaskScheduler):
+    async def test_start_stop(
+        self, scheduler_with_mock_manager: TaskScheduler
+    ):
         """Test starting and stopping the scheduler"""
         scheduler = scheduler_with_mock_manager
 

@@ -360,9 +360,7 @@ def _get_init(cls: type, field_map: FieldMap, opts: InitOptions):
                 f"    {_setattr(field_name, f'{init_transform_name}(self)')}",
             ):
                 _ = builder.add_scriptline(line)
-            _ = builder.add_glob(
-                init_transform_name, f.ref
-            )
+            _ = builder.add_glob(init_transform_name, f.ref)
         else:
             _ = builder.add_scriptline(_setattr(field_name, arg_name))
             arg = arg_name
@@ -511,7 +509,10 @@ def _resolve_forward_ref(
         return field_type, True
     try:
         parsed = field_type._evaluate(
-            mod_globalns, {cls.__name__: cls}, recursive_guard=frozenset()
+            mod_globalns,
+            {cls.__name__: cls},
+            type_params=None,
+            recursive_guard=frozenset(),
         )
     except NameError:
         return make_unresolved_ref(cls, field), False
@@ -624,18 +625,14 @@ def get_squire_serialize(cls: type, field_map: FieldMap):
         _ = builder.add_glob(f"_field_type_{f.name}", field_type)
         default_line = "sentinel"
         if f.has_default:
-            _ = builder.add_glob(
-                f"_field_type_{f.name}_default", f.default
-            )
+            _ = builder.add_glob(f"_field_type_{f.name}_default", f.default)
             default_line = f"_field_type_{f.name}_default"
         elif f.has_default_factory:
             _ = builder.add_glob(
                 f"_field_type_{f.name}_default_factory", f.default
             )
             default_line = f"_field_type_{f.name}_default_factory()"
-        get_line = (
-            f"dict_get(mapping, {f.name!r}, {f.alias!r}, sentinel, {default_line}, _dict_get)"
-        )
+        get_line = f"dict_get(mapping, {f.name!r}, {f.alias!r}, sentinel, {default_line}, _dict_get)"
         if f.fromdict:
             _ = builder.add_glob(f"_field_type_{f.name}", f.fromdict)
             arg = f"_field_type_{f.name}({get_line})"

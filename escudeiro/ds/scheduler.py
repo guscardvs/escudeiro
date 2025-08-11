@@ -302,7 +302,9 @@ class TaskScheduler:
                 )
                 # Handle failed rescheduling
         else:
-            self.manager.spawn(self.remove_task(task.id_, task.remove_callback))
+            self.manager.spawn(
+                self.remove_task(task.id_, task.remove_callback)
+            )
 
     async def _scheduler_loop(self) -> None:
         """Main scheduling loop that executes due tasks.
@@ -361,12 +363,21 @@ class TaskScheduler:
             if isinstance(result, Exception):
                 self.log_exception(f"Task '{task.name}' failed {result}")
 
+    async def setup(self) -> None:
+        """Setup method to initialize the scheduler.
+
+        Can be overridden for custom initialization logic.
+        """
+        _ = await self.manager.start()
+        self.log_info("Task scheduler setup complete.")
+
     async def start(self) -> None:
         """Start the scheduler event loop."""
         if self._running:
             return
 
         self._running = True
+        await self.setup()
         self.log_info("Task scheduler started.")
         await self._scheduler_loop()
 

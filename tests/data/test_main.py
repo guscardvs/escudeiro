@@ -6,7 +6,14 @@ from unittest.mock import Mock
 
 import pytest
 
-from escudeiro.data import UNINITIALIZED, asdict, data, factory, field, fromdict
+from escudeiro.data import (
+    UNINITIALIZED,
+    asdict,
+    data,
+    factory,
+    field,
+    fromdict,
+)
 from escudeiro.data.field_ import private
 from escudeiro.data.helpers import call_init, init_hooks, squire_method
 from escudeiro.data.methods import MethodBuilder
