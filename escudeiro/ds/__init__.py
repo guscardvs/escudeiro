@@ -6,6 +6,7 @@ from .pools.asyncio import AsyncPool
 from .pools.thread import ThreadPool
 from .registry import CallableRegistry, Registry
 from .scheduler import CronInfo, Task, TaskScheduler
+from .sentinel import Sentinel
 from .worker import WorkerQueue
 
 __all__ = [
@@ -22,4 +23,5 @@ __all__ = [
     "VirtualFileTree",
     "Registry",
     "CallableRegistry",
+    "Sentinel",
 ]
