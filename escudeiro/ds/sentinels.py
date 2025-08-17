@@ -1,7 +1,6 @@
-from typing import Any, TypeVar, override
+from typing import Any, final, override
 
 _registry: dict[str, Any] = {}
-T = TypeVar("T")
 
 
 class _BaseSentinel:
@@ -9,11 +8,10 @@ class _BaseSentinel:
 
     @override
     def __repr__(self) -> str:
-        name = object.__getattribute__(self, "_name")
         value = object.__getattribute__(self, "_value")
         if value is self:
-            return name
-        return f"{name}({value!r})"
+            return value
+        return f"{value!r}"
 
     @override
     def __reduce__(self) -> tuple[type["_BaseSentinel"], tuple[str, str, Any]]:
@@ -27,6 +25,7 @@ class _BaseSentinel:
         )
 
 
+@final
 class Sentinel:
     """Unique sentinel values.
 
@@ -36,7 +35,7 @@ class Sentinel:
     a collection of unique sentinel instances (if the decorated class defines members).
     """
 
-    def __new__(cls, decorated_cls: type[T]) -> T | Any:
+    def __new__[T](cls, decorated_cls: type[T]) -> _BaseSentinel | type[Any]:
         name = decorated_cls.__name__
         module_name = decorated_cls.__module__
 
@@ -61,8 +60,7 @@ class Sentinel:
             return sentinel_instance
 
         # Case 2: Enum-like sentinel (e.g., @Sentinel class STATUS: PENDING = 1)
-        new_type = type(name, (object,), {})
-        object.__setattr__(new_type, "__module__", module_name)
+        new_type = type(name, (object,), {"__module__": module_name})
 
         for member_name, member_value in members.items():
             member_sentinel_name = f"{name}.{member_name}"
