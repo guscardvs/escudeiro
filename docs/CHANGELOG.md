@@ -1,3 +1,70 @@
+## 0.2.15 (2025-08-11)
+
+### Refactor
+
+- streamline code formatting and enhance task scheduler setup
+
+## 0.2.14 (2025-08-10)
+
+### Fix
+
+- add configuration context management with get_config, set_config, and get_env functions
+
+## 0.2.13 (2025-08-08)
+
+### Fix
+
+- enhance type casting utilities and add new tests for assert_notnone and cast_notnone
+
+## 0.2.12 (2025-08-08)
+
+### Fix
+
+- add is_instanceexact function and corresponding tests
+
+## 0.2.11 (2025-08-03)
+
+### Fix
+
+- implement registry to support non-enumable code
+
+## 0.2.10 (2025-07-16)
+
+### Fix
+
+- implement missing monad, pathx, and string utilities; update tests for new casting and path validation logic
+
+## 0.2.9 (2025-07-16)
+
+### Fix
+
+- implement missing monad, pathx, and string utilities; update tests for new casting and path validation logic
+- **data**: no longer considers a private field with ref as empty
+
+## 0.2.8 (2025-06-15)
+
+### Fix
+
+- now properly supports sequence types on load and dump
+
+## 0.2.7 (2025-06-15)
+
+### Fix
+
+- remove print statements
+
+## 0.2.6 (2025-06-15)
+
+### Fix
+
+- **data**: add support for a ref parameter
+
+## 0.2.5 (2025-06-14)
+
+### Fix
+
+- **data**: now properly supports aliases and defaults on converter functions
+
 ## 0.2.4 (2025-06-12)
 
 ### Fix
