@@ -19,6 +19,7 @@ from escudeiro.misc.functions import (
     as_datetime,
     asafe_cast,
     asyncdo_with,
+    awrap_result_with,
     cache,
     call_once,
     do_with,
@@ -26,10 +27,10 @@ from escudeiro.misc.functions import (
     join_into_datetime,
     make_noop,
     raise_insteadof,
+    return_param,
     safe_cast,
     walk_object,
     wrap_result_with,
-    awrap_result_with,
 )
 from escudeiro.misc.iterx import (
     aall,
@@ -173,4 +174,5 @@ __all__ = [
     "wrap",
     "wrap_result_with",
     "awrap_result_with",
+    "return_param",
 ]

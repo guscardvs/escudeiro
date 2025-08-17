@@ -143,6 +143,7 @@ assert url2 == url
     - `.add(...)`: Return a new URL with updated components (`path`, `query`, `fragment`, `netloc`, `netloc_obj`)
     - `.copy()`: Return a new identical URL instance
     - `.encode()`: Return the URL as a string
+    - `.from_args(...)` Return a new URL from the args received. Shortcut to `URL("").set(...)`
 
 ### `Netloc`, `Path`, `Query`, `Fragment`
 
@@ -164,4 +165,3 @@ assert url2 == url
 
 - [Python `urllib.parse`](https://docs.python.org/3/library/urllib.parse.html)
 - [escudeiro.url source code](https://github.com/cardoso/escudeiro/tree/develop/escudeiro/url)
-

@@ -56,6 +56,32 @@ print(is_hashable(MyAlias))      # True
 print(is_hashable(MyAnnotated))  # True
 ```
 
+### Exact instance checking
+
+```python
+class Parent:
+  pass
+
+class Child(Parent):
+    pass
+
+isinstance(Child(), Parent) # true
+isinstance(Child(), Child) # true
+is_instanceexact(Child(), Child) # true
+is_instanceexact(Child(), Parent) # false
+```
+
+### Casting shortcuts
+
+```python
+
+value: int | None = 1
+
+cast_notnone(value) # type casts value to int for the linter.
+assert_notnone(value) # also type casts, but if value is none raises ValueError.
+# assert_notnone raises ValueError because python assert can be skipped by optimized mode.
+```
+
 ---
 
 ## API Reference
@@ -71,6 +97,44 @@ def is_hashable(annotation: Any) -> TypeIs[Hashable]:
 - **Parameters:**
   - `annotation`: The type annotation to check.
 - **Returns:** `True` if the type is hashable, `False` otherwise.
+
+### `is_instanceexact`
+
+```python
+def is_instanceexact(obj: Any, annotation: Any) -> bool:
+    ...
+```
+
+- **Description:** Checks if an object is an instance of a specific type, considering inheritance.
+  - It supports annotations and unions.
+- **Parameters:**
+  - `obj`: The object to check.
+  - `annotation`: The type annotation to check against.
+- **Returns:** `True` if the object is an instance of the specified type, `False` otherwise.
+
+### `cast_notnone`
+
+```python
+def cast_notnone[T](value: T | None) -> T:
+    ...
+```
+
+- **Description:** Casts a value to a non-None type for type checking.
+- **Parameters:**
+  - `value`: The value to cast.
+- **Returns:** Returns typing.cast(T, value)
+
+### `assert_notnone`
+
+```python
+def assert_notnone[T](value: T | None) -> T:
+    ...
+```
+
+- **Description:** Asserts that a value is not None, raising a ValueError if it is.
+- **Parameters:**
+  - `value`: The value to check.
+- **Returns:** The value if it is not None.
 
 ---
 

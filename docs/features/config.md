@@ -90,14 +90,9 @@ The `escudeiro.config.core.utils` module provides a set of robust helpers for ty
 
 ### Key Helpers
 
-- **`maybe_result`**: A decorator that wraps a function to provide `.strict()` (raises if result is `None`), `.optional()` (suppresses exceptions), and normal call behavior. Used for safe and strict type conversions.
-- **`instance_is_casted`**: Returns a decorator that checks if a value is already of the expected type; if not, applies a fallback conversion.
 - **`boolean_cast`**: Converts strings like `"true"`, `"1"`, `"false"`, `"0"` to booleans, with strict error handling via `maybe_result`.
 - **`valid_path`**: Casts a string to a `Path` and checks if it exists, raising if not.
-- **`joined_cast`**: Chains multiple casting operations together, allowing for complex type transformations.
-- **`with_rule`**: Wraps a cast function to enforce a rule (predicate), raising `InvalidEnv` if the rule fails.
 - **`literal_cast`**: Casts a string to a value from a `Literal` type annotation, raising if the value is not allowed.
-- **`multicast`**: Tries multiple casting functions in order, raising if all fail.
 - **`none_is_missing`**: Ensures that a cast never returns `None`, raising `MissingName` if it does.
 - **`null_cast`**: Casts strings like `"null"`, `"none"`, or `""` to Python `None`.
 
@@ -194,6 +189,9 @@ class DotFile:
 - `default_cast`: Default type casting function.
 - `MISSING`: Sentinel for missing values.
 - `EnvMapping`: Mapping for environment variables.
+- `get_config`: Function to retrieve config managed by contextvars inside escudeiro.
+- `set_config`: Function to set config values managed by contextvars inside escudeiro. It raises `AlreadySet` if the config was already changed once.
+- `get_env`: Function to retrive the environment set in the contextvars.
 
 ---
 
