@@ -1,3 +1,20 @@
+## 0.2.16 (2025-08-17)
+
+### BREAKING CHANGE
+
+- sentinel objects are working now
+
+### Feat
+
+- **sentinel.py**: added basic sentinel objects logic
+
+### Fix
+
+- **sentinels**: enhance Sentinel class with type parameter and initialization logic
+- add missing remote configuration to mkdocs.yml
+- **sentinels.py**: fixed type casting for enum-like sentinels
+- **sentinels**: renamed module name
+
 ## 0.2.15 (2025-08-11)
 
 ### Refactor
