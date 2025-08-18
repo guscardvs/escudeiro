@@ -1,5 +1,6 @@
 import asyncio
 from collections.abc import AsyncGenerator, Collection, Sequence
+from contextlib import aclosing
 
 import pytest
 
@@ -58,7 +59,9 @@ class TestMovingWindow:
 
 class TestAislice:
     async def test_stop_only(self):
-        result = [x async for x in aislice(async_generator([1, 2, 3, 4, 5]), 3)]
+        result = [
+            x async for x in aislice(async_generator([1, 2, 3, 4, 5]), 3)
+        ]
         assert result == [1, 2, 3]
 
     async def test_start_stop(self):
@@ -99,7 +102,8 @@ class TestAMovingWindow:
 
     async def test_incomplete_final_window(self):
         result = [
-            x async for x in amoving_window(async_generator([1, 2, 3, 4, 5]), 2)
+            x
+            async for x in amoving_window(async_generator([1, 2, 3, 4, 5]), 2)
         ]
         assert result == [[1, 2], [3, 4], [5]]
 
@@ -153,7 +157,9 @@ class TestAfilter:
     async def test_all_filtered(self):
         result = [
             x
-            async for x in afilter(lambda x: x > 10, async_generator([1, 2, 3]))
+            async for x in afilter(
+                lambda x: x > 10, async_generator([1, 2, 3])
+            )
         ]
         assert result == []
 
@@ -203,7 +209,9 @@ class TestAreduce:
 
 class TestAenumerate:
     async def test_default_start(self):
-        result = [x async for x in aenumerate(async_generator(["a", "b", "c"]))]
+        result = [
+            x async for x in aenumerate(async_generator(["a", "b", "c"]))
+        ]
         assert result == [(0, "a"), (1, "b"), (2, "c")]
 
     async def test_custom_start(self):
@@ -219,19 +227,25 @@ class TestAenumerate:
 
 class TestAny:
     async def test_true_case(self):
-        result = await aany(async_generator([False, False, True, False]))
+        async with aclosing(
+            async_generator([False, False, True, False])
+        ) as gen:
+            result = await aany(gen)
         assert result is True
 
     async def test_false_case(self):
-        result = await aany(async_generator([False, False, False]))
+        async with aclosing(async_generator([False, False, False])) as gen:
+            result = await aany(gen)
         assert result is False
 
     async def test_empty_iterable(self):
-        result = await aany(async_generator([]))
+        async with aclosing(async_generator([])) as gen:
+            result = await aany(gen)
         assert result is False
 
     async def test_custom_predicate(self):
-        result = await aany(async_generator([1, 2, 3, 4]), lambda x: x > 3)
+        async with aclosing(async_generator([1, 2, 3, 4])) as gen:
+            result = await aany(gen, lambda x: x > 3)
         assert result is True
 
     async def test_async_predicate(self):
@@ -239,27 +253,30 @@ class TestAny:
             await asyncio.sleep(0.01)
             return x > 3
 
-        result = await aany(
-            async_generator([1, 2, 3, 4]), is_greater_than_three
-        )
+        async with aclosing(async_generator([1, 2, 3, 4])) as gen:
+            result = await aany(gen, is_greater_than_three)
         assert result is True
 
 
 class TestAll:
     async def test_true_case(self):
-        result = await aall(async_generator([True, True, True]))
+        async with aclosing(async_generator([True, True, True])) as gen:
+            result = await aall(gen)
         assert result is True
 
     async def test_false_case(self):
-        result = await aall(async_generator([True, False, True]))
+        async with aclosing(async_generator([True, False, True])) as gen:
+            result = await aall(gen)
         assert result is False
 
     async def test_empty_iterable(self):
-        result = await aall(async_generator([]))
+        async with aclosing(async_generator([])) as gen:
+            result = await aall(gen)
         assert result is True
 
     async def test_custom_predicate(self):
-        result = await aall(async_generator([2, 4, 6, 8]), lambda x: x % 2 == 0)
+        async with aclosing(async_generator([2, 4, 6, 8])) as gen:
+            result = await aall(gen, lambda x: x % 2 == 0)
         assert result is True
 
     async def test_async_predicate(self):
@@ -267,7 +284,8 @@ class TestAll:
             await asyncio.sleep(0.01)
             return x % 2 == 0
 
-        result = await aall(async_generator([2, 4, 5, 6]), is_even)
+        async with aclosing(async_generator([2, 4, 5, 6])) as gen:
+            result = await aall(gen, is_even)
         assert result is False
 
 
@@ -278,7 +296,8 @@ class TestAcarrymap:
             return x * 2
 
         result = [
-            x async for x in acarrymap(async_double, async_generator([1, 2, 3]))
+            x
+            async for x in acarrymap(async_double, async_generator([1, 2, 3]))
         ]
         assert result == [(2, 1), (4, 2), (6, 3)]
 
@@ -287,7 +306,9 @@ class TestAcarrymap:
             await asyncio.sleep(0.01)
             return x * 2
 
-        result = [x async for x in acarrymap(async_double, async_generator([]))]
+        result = [
+            x async for x in acarrymap(async_double, async_generator([]))
+        ]
         assert result == []
 
 
@@ -519,7 +540,10 @@ class TestGroupValues:
         ]
         result = group_values(data, "category")
         assert result == {
-            "A": [{"category": "A", "value": 1}, {"category": "A", "value": 3}],
+            "A": [
+                {"category": "A", "value": 1},
+                {"category": "A", "value": 3},
+            ],
             "B": [{"category": "B", "value": 2}],
         }
 
@@ -530,7 +554,10 @@ class TestGroupValues:
         ]
         result = group_values(data, "category")
         assert result == {
-            "A": [{"category": "A", "value": 1}, {"category": "A", "value": 2}],
+            "A": [
+                {"category": "A", "value": 1},
+                {"category": "A", "value": 2},
+            ],
         }
 
     def test_empty_collection(self):

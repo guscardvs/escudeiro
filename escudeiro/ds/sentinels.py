@@ -1,27 +1,65 @@
-from typing import Any, cast, override
+from typing import Any, Self, cast, override
 
 _registry: dict[str, Any] = {}
 
 
-class Sentinel:
+class Sentinel[T]:
     """Internal base for sentinel instances."""
+
+    _name: str
+    _module_name: str
+    _value: Any
+    _is_initialized: bool = False
+
+    def __new__(
+        cls,
+        name: str,
+        modulename: str,
+        value: Any = None,
+    ) -> Self:
+        registry_key = f"{modulename}:{name}"
+        if self := _registry.get(registry_key):
+            return self
+        self = super().__new__(cls)
+        _registry[registry_key] = self
+        return self
+
+    def __init__(
+        self,
+        name: str,
+        modulename: str,
+        value: Any = None,
+    ) -> None:
+        if self._is_initialized:
+            return
+
+        self._name = name
+        self._module_name = modulename
+        self._value = value if value is not None else self
+        self._is_initialized = True
 
     @override
     def __repr__(self) -> str:
-        name = object.__getattribute__(self, "_name")
-        value = object.__getattribute__(self, "_value")
-        return name if value is self else f"{value!r}"
+        return self._name if self._value is self else f"{self._value!r}"
 
     @override
-    def __reduce__(self) -> tuple[type["Sentinel"], tuple[str, str, Any]]:
+    def __reduce__(self) -> tuple[type[Self], tuple[str, str, Any]]:
         return (
             self.__class__,
             (
-                object.__getattribute__(self, "_name"),
-                object.__getattribute__(self, "_module_name"),
-                object.__getattribute__(self, "_value"),
+                self._name,
+                self._module_name,
+                self._value if self._value is not self else None,
             ),
         )
+
+    @override
+    def __eq__(self, value: object, /) -> bool:
+        if isinstance(value, Sentinel):
+            return self is value
+        if self._value is self:
+            return NotImplemented
+        return self._value == value
 
 
 def sentinel[T](cls: type[T]) -> T:
@@ -43,28 +81,20 @@ def sentinel[T](cls: type[T]) -> T:
 
     # Case 1: Single sentinel (e.g., @sentinel class MISSING: pass)
     if not members:
-        registry_key = f"{module_name}-{name}"
-        sentinel_instance = _registry.get(registry_key, None)
-        if sentinel_instance is not None:
-            return sentinel_instance
-
-        sentinel_instance = Sentinel.__new__(Sentinel)
-        object.__setattr__(sentinel_instance, "_name", name)
-        object.__setattr__(sentinel_instance, "_module_name", module_name)
-        object.__setattr__(sentinel_instance, "_value", sentinel_instance)
-        _registry.setdefault(registry_key, sentinel_instance)
+        sentinel_instance = Sentinel(name, module_name)
         return cast(T, sentinel_instance)
 
     # Case 2: Enum-like sentinel (e.g., @sentinel class STATUS: PENDING = 1)
-    new_type = type(name, (object,), {"__module__": module_name})
+    namespace: dict[str, Any] = {"__module__": module_name}
 
     for member_name, member_value in members.items():
         member_sentinel_name = f"{name}.{member_name}"
         member_sentinel_module = module_name
 
-        registry_key = f"{member_sentinel_module}-{member_sentinel_name}"
-        final_value = _registry.setdefault(registry_key, member_value)
+        sentinel = Sentinel(
+            member_sentinel_name, member_sentinel_module, member_value
+        )
+        namespace[member_name] = sentinel
 
-        setattr(new_type, member_name, final_value)
-
+    new_type = type(name, (), namespace)
     return cast(T, new_type)

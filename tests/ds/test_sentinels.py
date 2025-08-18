@@ -1,5 +1,7 @@
 import pickle
 
+import pytest
+
 from escudeiro.ds.sentinels import Sentinel, _registry, sentinel
 
 
@@ -27,7 +29,11 @@ class TestSentinel:
 
         reduced = MISSING.__reduce__()
         assert reduced[0] is Sentinel
-        assert reduced[1] == ("MISSING", "tests.ds.test_sentinels", MISSING)
+        assert reduced[1] == (
+            "MISSING",
+            "tests.ds.test_sentinels",
+            None,
+        )
 
         pickled = pickle.dumps(MISSING)
         unpickled = pickle.loads(pickled)
@@ -69,13 +75,14 @@ class TestSentinelDecorator:
         _registry.clear()
 
     def test_single_sentinel_creation(self) -> None:
-        @sentinel
-        class MISSING:
+        class _MISSING:
             pass
 
+        MISSING = sentinel(_MISSING)
+
         assert isinstance(MISSING, Sentinel)
-        assert repr(MISSING) == "MISSING"
-        assert MISSING is sentinel(MISSING.__class__)  # Ensure uniqueness
+        assert repr(MISSING) == "_MISSING"
+        assert MISSING is sentinel(_MISSING)  # Ensure uniqueness
 
     def test_single_sentinel_uniqueness_across_calls(self) -> None:
         @sentinel
@@ -87,12 +94,6 @@ class TestSentinelDecorator:
             pass
 
         assert MISSING_A is not MISSING_B
-
-        @sentinel
-        class MISSING_A_AGAIN:
-            pass
-
-        assert MISSING_A is MISSING_A_AGAIN
 
     def test_enum_like_sentinel_creation(self) -> None:
         @sentinel
@@ -124,11 +125,6 @@ class TestSentinelDecorator:
 
         assert STATUS_A.PENDING is not STATUS_B.PENDING
 
-        @sentinel
-        class STATUS_A_AGAIN:
-            PENDING = 1
-
-        assert STATUS_A.PENDING is STATUS_A_AGAIN.PENDING
 
     def test_sentinel_with_callable_members_ignored(self) -> None:
         @sentinel
@@ -155,8 +151,8 @@ class TestSentinelDecorator:
         class FIRST_CALL:
             pass
 
-        assert "tests.ds.test_sentinels-FIRST_CALL" in _registry
-        assert _registry["tests.ds.test_sentinels-FIRST_CALL"] is FIRST_CALL
+        assert "tests.ds.test_sentinels:FIRST_CALL" in _registry
+        assert _registry["tests.ds.test_sentinels:FIRST_CALL"] is FIRST_CALL
 
         @sentinel
         class STATUS_REGISTRY:
@@ -164,5 +160,8 @@ class TestSentinelDecorator:
 
         _ = STATUS_REGISTRY.ITEM
 
-        assert "tests.ds.test_sentinels-STATUS_REGISTRY.ITEM" in _registry
-        assert _registry["tests.ds.test_sentinels-STATUS_REGISTRY.ITEM"] == 1
+        assert "tests.ds.test_sentinels:STATUS_REGISTRY.ITEM" in _registry
+        assert _registry["tests.ds.test_sentinels:STATUS_REGISTRY.ITEM"] == 1
+
+        # assert first insertions were not replaced
+        assert _registry["tests.ds.test_sentinels:FIRST_CALL"] is FIRST_CALL
