@@ -855,13 +855,23 @@ def isinstance_or_cast[T, Arg, U](
 
 
 class Caster[U, T]:
+    __slots__ = (
+        "_caster",
+        "_name",
+        "_safe_casted",
+    )
+
     def __init__(
-        self, caster: Callable[[U], T], name: str | None = None
+        self,
+        caster: Callable[[U], T],
+        name: str | None = None,
+        safe_casted: bool = False,
     ) -> None:
         self._caster = caster
         self._name = cast(
             str, name or getattr(caster, "__name__", type(self).__name__)
         )
+        self._safe_casted = safe_casted
 
     def __call__(self, value: U) -> T:
         """Casts the value using the provided caster function."""
@@ -871,6 +881,9 @@ class Caster[U, T]:
         return self._name
 
     def join[S](self, caster: Callable[[T], S]) -> Caster[U, S]:
+        if self._safe_casted:
+            raise ValueError("Cannot join with a safe-casted Caster")
+
         def _join(value: U) -> S:
             return caster(self._caster(value))
 
@@ -925,12 +938,16 @@ class Caster[U, T]:
         return Caster(
             _safe_cast,
             name=f"{self._name}.safe_cast",
+            safe_casted=True,
         )
 
     def or_[S](
         self, caster: Callable[[U], S], *childof: type[Exception]
     ) -> Caster[U, T | S]:
         """Returns a new caster that tries the original caster first, then the provided caster if the first fails."""
+
+        if self._safe_casted:
+            raise ValueError("Cannot join with a safe-casted Caster")
 
         if not childof:
             childof = (TypeError, ValueError)
@@ -957,6 +974,8 @@ class Caster[U, T]:
         self, rule: Callable[[T], bool], rulename: str | None = None
     ) -> Caster[U, T]:
         """Returns a new caster that applies the given rule to the result."""
+        if self._safe_casted:
+            raise ValueError("Cannot apply rule to a safe-casted Caster")
 
         if rulename is None:
             if isinstance(rule, LambdaType) and rule.__name__ == "<lambda>":

@@ -6,6 +6,7 @@ from collections.abc import AsyncIterable, Callable
 from datetime import UTC, date, datetime, time
 from decimal import Decimal
 from functools import partial
+from shlex import join
 from typing import Any, NoReturn, Self
 from unittest.mock import AsyncMock, MagicMock, Mock, call, patch
 
@@ -1283,6 +1284,40 @@ class TestCaster:
                 f"result 123 does not satisfy the rule {squote(rulename)}"
             ),
             123,
+        )
+
+    def test_cannot_add_pipeline_for_safe_casted(self):
+        # test join
+        @Caster
+        def example_func(val: str):
+            return int(val)
+
+        def as_float(val: Any | None) -> float:
+            if val is None:
+                return 0
+            else:
+                return float(val)
+
+        with pytest.raises(ValueError) as join_excinfo:
+            _ = example_func.safe_cast().join(as_float)
+        with pytest.raises(ValueError) as or_excinfo:
+            _ = example_func.safe_cast().or_(as_float)
+        with pytest.raises(ValueError) as with_rule_excinfo:
+            _ = example_func.safe_cast().with_rule(
+                lambda val: as_float(val) > 0, "Must be positive"
+            )
+
+        assert (
+            next_or(join_excinfo.value.args)
+            == "Cannot join with a safe-casted Caster"
+        )
+        assert (
+            next_or(or_excinfo.value.args)
+            == "Cannot join with a safe-casted Caster"
+        )
+        assert (
+            next_or(with_rule_excinfo.value.args)
+            == "Cannot apply rule to a safe-casted Caster"
         )
 
 
