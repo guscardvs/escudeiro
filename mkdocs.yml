@@ -37,6 +37,7 @@ nav:
         - Pools: features/datastructures/pools.md
         - Filetree: features/datastructures/filetree.md
         - Registry: features/datastructures/registry.md
+        - Sentinels: features/datastructures/sentinels.md
       - Data Classes: features/data.md
       - Context Management and Resource Usage: features/context.md
       - Configuration and Environment: features/config.md
