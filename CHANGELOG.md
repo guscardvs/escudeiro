@@ -1,3 +1,10 @@
+## 0.2.17 (2025-08-18)
+
+### Fix
+
+- **caster**: prevent joining and applying rules on safe-casted Caster instances
+- add Sentinels section to navigation in mkdocs.yml
+
 ## 0.2.16 (2025-08-17)
 
 ### BREAKING CHANGE
