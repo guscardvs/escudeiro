@@ -1,5 +1,7 @@
 site_name: Escudeiro
 site_url: https://guscardvs.github.io/escudeiro/
+remote_name: origin
+remote_branch: gh-pages
 theme:
   name: material
   features:
