@@ -10,9 +10,7 @@ class Sentinel:
     def __repr__(self) -> str:
         name = object.__getattribute__(self, "_name")
         value = object.__getattribute__(self, "_value")
-        if value is self:
-            return name
-        return f"{value!r}"
+        return name if value is self else f"{value!r}"
 
     @override
     def __reduce__(self) -> tuple[type["Sentinel"], tuple[str, str, Any]]:
