@@ -190,3 +190,21 @@ def runtime_attr_with_value(
         return hasattr(obj, attr_name) and getattr(obj, attr_name) == attr_value
 
     return check
+
+
+def runtime_chain_validate_all(*validators: Validator) -> Validator:
+    """Combines multiple validator functions into a single validator that checks if all validators pass."""
+
+    def check(obj: Any) -> bool:
+        return all(validator(obj) for validator in validators)
+
+    return check
+
+
+def runtime_chain_validate_any(*validators: Validator) -> Validator:
+    """Combines multiple validator functions into a single validator that checks if any validator passes."""
+
+    def check(obj: Any) -> bool:
+        return any(validator(obj) for validator in validators)
+
+    return check

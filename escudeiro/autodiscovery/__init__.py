@@ -2,6 +2,8 @@ from .base import PathConverter, make_modulename_converter, smart_import
 from .runtime import (
     RuntimeAutoDiscovery,
     runtime_attr_with_value,
+    runtime_chain_validate_all,
+    runtime_chain_validate_any,
     runtime_child_of,
     runtime_contains_attr,
     runtime_instance_of,
@@ -30,4 +32,6 @@ __all__ = [
     "PathConverter",
     "make_modulename_converter",
     "smart_import",
+    "runtime_chain_validate_any",
+    "runtime_chain_validate_all",
 ]
