@@ -4,6 +4,7 @@ ARG PYVER=3.12
 FROM python:${PYVER}-alpine
 ARG PYVER
 ENV PYVER=${PYVER}
+
 # Install build dependencies
 RUN apk update && apk add --no-cache \
     py3-pip \

@@ -13,11 +13,10 @@ musllinux-clean:
 	@mkdir -p ./musllinux/target
 
 musllinux-build: musllinux-clean
-	$(DOCKER_RUNTIME) build -f ./docker/musllinux.dockerfile --build-arg PYVER=3.12 -t escudeiro-musllinux:3.12 .
-	$(DOCKER_RUNTIME) run --rm -v $(PWD)/musllinux/target:/musllinux/target escudeiro-musllinux:3.12
-	$(DOCKER_RUNTIME) build -f ./docker/musllinux.dockerfile --build-arg PYVER=3.13 -t escudeiro-musllinux:3.13 .
-	$(DOCKER_RUNTIME) run --rm -v $(PWD)/musllinux/target:/musllinux/target escudeiro-musllinux:3.13
-
+	for ver in 3.12 3.13 3.14; do \
+		$(DOCKER_RUNTIME) build -f ./docker/musllinux.dockerfile --build-arg PYVER=$$ver -t escudeiro-musllinux:$$ver .; \
+		$(DOCKER_RUNTIME) run --rm -v $(PWD)/musllinux/target:/musllinux/target escudeiro-musllinux:$$ver; \
+	done
 clean:
 	@rm -rf ./target
 

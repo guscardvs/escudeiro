@@ -2,7 +2,6 @@ use pyo3::pymodule;
 
 #[pymodule]
 pub mod filetree {
-    use core::fmt;
     use pyo3::{PyResult, exceptions::PyValueError, pyclass, pyfunction, pymethods};
     use std::sync::{Arc, Mutex};
 
@@ -35,14 +34,6 @@ pub mod filetree {
     #[pyfunction]
     pub fn init_file() -> PyResult<String> {
         python_filename("init".to_string(), false, true)
-    }
-
-    #[derive(Debug, Clone)]
-    pub struct InvalidValueError;
-    impl fmt::Display for InvalidValueError {
-        fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-            write!(f, "invalid operation for value used.")
-        }
     }
 
     // Internal node representation using Arc<Mutex<>> for interior mutability
