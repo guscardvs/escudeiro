@@ -1,10 +1,12 @@
 import dataclasses
+import sys
 from enum import Enum
+from types import SimpleNamespace
 from typing import Any, Literal
 
 import pytest
 from attrs import asdict, define
-from pydantic import BaseModel, v1
+from pydantic import BaseModel
 
 from escudeiro import config
 from escudeiro.config.adapter.attrs import AttrsResolverStrategy
@@ -18,6 +20,11 @@ from escudeiro.data.converters import asdict as squire_asdict
 from escudeiro.data.utils.functions import disassemble_type
 from escudeiro.exc import InvalidCast
 from escudeiro.misc import jsonx
+
+if sys.version_info < (3, 14):
+    from pydantic import v1
+else:
+    v1 = SimpleNamespace(BaseModel=BaseModel)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -123,7 +130,11 @@ def test_adapter_parses_correctly_on_from_config():
     assert (
         dataclasses.asdict(person_config)
         == asdict(other_config)
-        == another_v1_config.dict()
+        == (
+            another_v1_config.dict()
+            if sys.version_info < (3, 14)
+            else another_config.model_dump()
+        )
         == another_config.model_dump()
         == squire_asdict(another)
     )

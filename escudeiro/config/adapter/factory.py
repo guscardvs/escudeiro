@@ -1,4 +1,5 @@
 import contextlib
+import sys
 import typing
 from collections.abc import Callable, Mapping, Sequence
 from contextlib import suppress
@@ -96,9 +97,13 @@ class AdapterConfigFactory:
         """
         klass = config_class.origin or config_class.type_
         try:
-            from pydantic import BaseModel, v1
+            from pydantic import BaseModel
 
-            base_model_cls = [BaseModel, v1.BaseModel]
+            base_model_cls: list[type] = [BaseModel]
+            if sys.version_info < (3, 14):
+                from pydantic import v1
+
+                base_model_cls.append(v1.BaseModel)
         except ImportError:
             base_model_cls = []
         if hasattr(klass, "__squire_attrs__"):
@@ -211,7 +216,9 @@ class AdapterConfigFactory:
                 sep,
                 defaults=defaults,
             )
-        return _try_each(*names, default=default, cast=cast, config=self.config)
+        return _try_each(
+            *names, default=default, cast=cast, config=self.config
+        )
 
     def resolve_names(
         self, model_cls: type, resolver: FieldResolverStrategy, prefix: str

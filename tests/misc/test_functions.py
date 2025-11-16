@@ -2,11 +2,11 @@
 
 import asyncio
 import contextlib
+import inspect
 from collections.abc import AsyncIterable, Callable
 from datetime import UTC, date, datetime, time
 from decimal import Decimal
 from functools import partial
-from shlex import join
 from typing import Any, NoReturn, Self
 from unittest.mock import AsyncMock, MagicMock, Mock, call, patch
 
@@ -152,7 +152,7 @@ class TestAsAsync:
 
         result = as_async(async_func)
         assert result is async_func
-        assert asyncio.iscoroutinefunction(result)
+        assert inspect.iscoroutinefunction(result)
 
     def test_sync_function_converted(self):
         def sync_func():
@@ -160,7 +160,7 @@ class TestAsAsync:
 
         result = as_async(sync_func)
         assert result is not sync_func
-        assert asyncio.iscoroutinefunction(result)
+        assert inspect.iscoroutinefunction(result)
 
     async def test_converted_function_execution(self):
         def sync_func(x: float, y: float):
@@ -190,7 +190,7 @@ class TestAsAsync:
         def func1(x: float):
             return x * 2
 
-        assert asyncio.iscoroutinefunction(func1)
+        assert inspect.iscoroutinefunction(func1)
 
         # With arguments
         async def custom_cast(func: Callable[[float], float], x: float):
@@ -201,7 +201,7 @@ class TestAsAsync:
         def func2(x: float):
             return x * 2
 
-        assert asyncio.iscoroutinefunction(func2)
+        assert inspect.iscoroutinefunction(func2)
 
 
 class TestCache:
@@ -243,7 +243,7 @@ class TestMakeNoop:
 
     def test_async_noop(self):
         noop = make_noop(asyncio=True)
-        assert asyncio.iscoroutinefunction(noop)
+        assert inspect.iscoroutinefunction(noop)
 
     async def test_async_noop_execution(self):
         noop = make_noop(asyncio=True, returns={"status": "success"})

@@ -6,8 +6,8 @@ authors = [{ name = "Gustavo Cardoso", email = "dev.guscardvs@proton.me" }]
 readme = "README.md"
 requires-python = ">=3.12, <4.0.0"
 dependencies = [
-    "typing-extensions (>=4.13.0,<5.0.0)",
     "orjson (>=3.10.16,<4.0.0)",
+    "typing-extensions>=4.14.0",
 ]
 license = "Apache License 2.0"
 license-files = ["LICEN[CS]E*"]
@@ -78,6 +78,7 @@ build-backend = "maturin"
 
 [dependency-groups]
 dev = [
+    "attrs>=25.3.0",
     "basedpyright>=1.29.4",
     "hypothesis>=6.135.7",
     "maturin[patchelf]>=1.8.7",

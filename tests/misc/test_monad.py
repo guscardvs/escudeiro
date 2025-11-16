@@ -120,11 +120,13 @@ class TestAsyncCell:
             await asyncio.sleep(0)
             return 42
 
-        loop = asyncio.get_event_loop()
-        future = asyncio.ensure_future(coro())
-        cell = AsyncCell(future, lambda f: loop.run_until_complete(f))
-        assert cell.resolve() == 42
-
+        loop = asyncio.new_event_loop()
+        try:
+            future = asyncio.ensure_future(coro(), loop=loop)
+            cell = AsyncCell(future, lambda f: loop.run_until_complete(f))
+            assert cell.resolve() == 42
+        finally:
+            loop.close()
 
 class TestAsyncMonadHelper:
     def test_wrap_eager_and_lazy(self):
@@ -132,16 +134,19 @@ class TestAsyncMonadHelper:
             await asyncio.sleep(0)
             return x * 2
 
-        loop = asyncio.get_event_loop()
-        helper = AsyncMonadHelper(loop)
-        eager = helper.wrap_eager(coro)
-        lazy = helper.wrap_lazy(coro)
-        m = eager(5)
-        assert isinstance(m, Monad)
-        assert m.get_value() == 10
-        cell = lazy(6)
-        assert isinstance(cell, AsyncCell)
-        assert cell.resolve() == 12
+        loop = asyncio.new_event_loop()
+        try:
+            helper = AsyncMonadHelper(loop)
+            eager = helper.wrap_eager(coro)
+            lazy = helper.wrap_lazy(coro)
+            m = eager(5)
+            assert isinstance(m, Monad)
+            assert m.get_value() == 10
+            cell = lazy(6)
+            assert isinstance(cell, AsyncCell)
+            assert cell.resolve() == 12
+        finally:
+            loop.close()
 
 
 class TestLazyMonad:

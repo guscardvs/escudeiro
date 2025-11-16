@@ -13,7 +13,7 @@ from typing import (
     overload,
 )
 
-from typing_extensions import TypeIs
+from typing_extensions import TypeIs, evaluate_forward_ref
 
 from escudeiro.data.converters import fromdict, squire
 from escudeiro.data.schema import (
@@ -508,11 +508,11 @@ def _resolve_forward_ref(
     if not isinstance(field_type, ForwardRef) or field.asdict_:
         return field_type, True
     try:
-        parsed = field_type._evaluate(
-            mod_globalns,
-            {cls.__name__: cls},
+        parsed = evaluate_forward_ref(
+            field_type,
+            globals=mod_globalns,
+            locals={cls.__name__: cls},
             type_params=None,
-            recursive_guard=frozenset(),
         )
     except NameError:
         return make_unresolved_ref(cls, field), False

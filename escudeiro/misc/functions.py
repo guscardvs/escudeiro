@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import functools
+import inspect
 import re
 import typing
 from collections.abc import (
@@ -202,7 +203,7 @@ def as_async[**P, T](
     """
 
     def outer(func: Callable[P, T] | AsyncFunc[P, T]) -> AsyncFunc[P, T]:
-        if asyncio.iscoroutinefunction(func):
+        if inspect.iscoroutinefunction(func):
             return func
         elif TYPE_CHECKING:
             func = typing.cast(Callable[P, T], func)
@@ -1055,6 +1056,8 @@ def wrap_result_with[**P, T, U](
             result = func(*args, **kwargs)
             return wrapper(result)
 
+        __wrap.__annotations__ = func.__annotations__
+
         return __wrap
 
     return _wrap
@@ -1098,6 +1101,8 @@ def awrap_result_with[**P, T, U](
         async def __wrap(*args: P.args, **kwargs: P.kwargs) -> U:
             result = await func(*args, **kwargs)
             return await wrapper(result)
+
+        __wrap.__annotations__ = func.__annotations__
 
         return __wrap
 

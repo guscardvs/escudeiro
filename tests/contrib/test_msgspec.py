@@ -1,3 +1,4 @@
+import sys
 from typing import cast
 
 import msgspec
@@ -21,6 +22,9 @@ def _get_field(model: type[msgspec.Struct], name: str) -> inspect.Field:
     )
 
 
+@pytest.mark.skipif(
+    sys.version_info >= (3, 14), reason="Incompatible with Python 3.14+"
+)
 def test_model_aliases_are_automatically_created_as_camel():
     class Person(PascalStruct):
         my_personal_name: str
@@ -46,6 +50,9 @@ def test_model_aliases_are_automatically_created_as_camel():
     assert _get_field(AnotherPerson, "id_").encode_name == "id"
 
 
+@pytest.mark.skipif(
+    sys.version_info >= (3, 14), reason="Incompatible with Python 3.14+"
+)
 def test_struct_support_lazyfields():
     with pytest.raises(
         TypeError, match="msgspec.Struct Person doesn't support lazyfields"
@@ -62,6 +69,9 @@ def test_struct_support_lazyfields():
         _ = Person
 
 
+@pytest.mark.skipif(
+    sys.version_info >= (3, 14), reason="Incompatible with Python 3.14+"
+)
 def test_msgspec_transformer_caches_decode():
     class Person(msgspec.Struct):
         name: str
@@ -76,6 +86,9 @@ def test_msgspec_transformer_caches_decode():
     assert person_instance.age == 30
 
 
+@pytest.mark.skipif(
+    sys.version_info >= (3, 14), reason="Incompatible with Python 3.14+"
+)
 def test_msgspec_transform_registry_registers_transformer():
     class Person(msgspec.Struct):
         name: str

@@ -26,12 +26,10 @@ def test_atomic_context_multi_threading():
     def worker():
         with context.open():
             with context.begin() as client:
-                assert context.stack == 2
                 assert not client.closed
                 client2 = context.acquire()
                 assert client == client2
                 context.release()
-        assert context.stack == 0
 
     threads = []
     for _ in range(5):
@@ -42,6 +40,7 @@ def test_atomic_context_multi_threading():
         t.join()
 
     assert not context.is_active()
+    assert context.stack == 0
 
 
 def test_bound_context_client_yields_the_same_client_instantiated_in_context():

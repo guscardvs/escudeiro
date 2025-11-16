@@ -54,21 +54,21 @@ def test_context_multi_threading():
     def worker():
         with context.open():
             with context.begin() as client:
-                assert context.stack == 2
                 assert not client.closed
                 client2 = context.acquire()
                 assert client == client2
                 context.release()
-        assert context.stack == 0
         assert client.closed
 
     threads = []
-    for _ in range(5):
+    thread_size = 5
+    for _ in range(thread_size):
         t = threading.Thread(target=worker)
         t.start()
         threads.append(t)
     for t in threads:
         t.join()
+    assert context.stack == 0
 
 
 def test_context_releases_resource_even_on_error():

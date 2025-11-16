@@ -88,6 +88,7 @@ valid_path = Caster(autopath).with_rule(is_valid_path)
 
 S = TypeVar("S")
 
+
 @deprecated(
     "Use `escudeiro.misc.Caster.join` instead. This will be removed without notice in the future."
 )
@@ -131,7 +132,10 @@ class _JoinedCast[S, T]:
 
         return _wrapper
 
-@deprecated("Use `escudeiro.misc.Caster.join` instead. This will be removed without notice in the future.")
+
+@deprecated(
+    "Use `escudeiro.misc.Caster.join` instead. This will be removed without notice in the future."
+)
 def joined_cast[T](cast: Callable[[str], T]) -> Caster[str, T]:
     """
     Creates a joined casting function for chaining casting operations.
@@ -144,7 +148,10 @@ def joined_cast[T](cast: Callable[[str], T]) -> Caster[str, T]:
     """
     return Caster(cast)
 
-@deprecated("Use `escudeiro.misc.Caster.with_rule` instead. This will be removed without notice in the future.")
+
+@deprecated(
+    "Use `escudeiro.misc.Caster.with_rule` instead. This will be removed without notice in the future."
+)
 def with_rule[T](rule: Callable[[Any], bool]) -> Callable[[T], T]:
     """
     Applies a rule check on a value, raising an `InvalidEnv` exception if the rule is not satisfied.
@@ -249,6 +256,7 @@ def literal_cast(literal_decl: Any):
             )
 
     return _cast
+
 
 @deprecated(
     "Use `escudeiro.misc.Caster.or_` instead. This will be removed without notice in the future."

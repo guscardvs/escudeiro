@@ -1,4 +1,5 @@
 import asyncio
+import inspect
 import uuid
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timedelta, tzinfo
@@ -266,7 +267,7 @@ class TaskScheduler:
         self.log_info(f"Starting task '{task.name}'")
         await task.set()
         try:
-            if asyncio.iscoroutinefunction(task.func):
+            if inspect.iscoroutinefunction(task.func):
                 await task.func()
             else:
                 await asyncio.to_thread(task.func)
@@ -302,9 +303,7 @@ class TaskScheduler:
                 )
                 # Handle failed rescheduling
         else:
-            self.manager.spawn(
-                self.remove_task(task.id_, task.remove_callback)
-            )
+            self.manager.spawn(self.remove_task(task.id_, task.remove_callback))
 
     async def _scheduler_loop(self) -> None:
         """Main scheduling loop that executes due tasks.

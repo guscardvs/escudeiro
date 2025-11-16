@@ -1,5 +1,5 @@
 version = 1
-revision = 2
+revision = 3
 requires-python = ">=3.12, <4.0.0"
 
 [[package]]
@@ -215,6 +215,7 @@ pydantic = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "attrs" },
     { name = "basedpyright" },
     { name = "hypothesis" },
     { name = "maturin", extra = ["patchelf"] },
@@ -234,12 +235,13 @@ requires-dist = [
     { name = "msgspec", marker = "extra == 'msgspec'", specifier = ">=0.19.0,<1.0.0" },
     { name = "orjson", specifier = ">=3.10.16,<4.0.0" },
     { name = "pydantic", marker = "extra == 'pydantic'", specifier = ">=2.0.0,<3.0.0" },
-    { name = "typing-extensions", specifier = ">=4.13.0,<5.0.0" },
+    { name = "typing-extensions", specifier = ">=4.14.0" },
 ]
 provides-extras = ["pydantic", "msgspec"]
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "attrs", specifier = ">=25.3.0" },
     { name = "basedpyright", specifier = ">=1.29.4" },
     { name = "hypothesis", specifier = ">=6.135.7" },
     { name = "maturin", extras = ["patchelf"], specifier = ">=1.8.7" },

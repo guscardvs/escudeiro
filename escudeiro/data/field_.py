@@ -222,7 +222,6 @@ def field(
 ) -> Any: ...
 
 
-
 @overload
 def field(
     *,
@@ -348,9 +347,11 @@ def private(
     :param initial: The initial value of the field.
     :param initial_factory: A callable that returns the initial value of the field.
     Parameters are the same as in info."""
-    if isinstance(initial, EllipsisType) and isinstance(
-        initial_factory, EllipsisType
-    ) and ref is None:
+    if (
+        isinstance(initial, EllipsisType)
+        and isinstance(initial_factory, EllipsisType)
+        and ref is None
+    ):
         raise ValueError("No initial value provided")
     if not isinstance(initial_factory, EllipsisType):
         initial = factory(initial_factory)

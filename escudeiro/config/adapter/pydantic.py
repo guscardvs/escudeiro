@@ -1,13 +1,17 @@
+import sys
 from collections.abc import Generator, Sequence
 from typing import Any, cast, override
 
-from pydantic import BaseModel, v1
+from pydantic import BaseModel
 from pydantic.fields import FieldInfo
 
 from escudeiro.config.adapter.interface import FieldResolverStrategy
 from escudeiro.config.interface import MISSING
 from escudeiro.data import data
 from escudeiro.lazyfields import lazyfield
+
+if sys.version_info < (3, 14):
+    from pydantic import v1
 
 
 @data
@@ -50,9 +54,11 @@ class PydanticResolverStrategy(FieldResolverStrategy[FieldWrapper]):
     @classmethod
     def iterfield(
         cls,
-        config_class: type[BaseModel | v1.BaseModel],
+        config_class: "type[BaseModel | v1.BaseModel]",
     ) -> Generator[FieldWrapper, Any, Any]:
-        if issubclass(config_class, v1.BaseModel):
+        if sys.version_info < (3, 14) and issubclass(
+            config_class, v1.BaseModel
+        ):
             yield from cls._as_v1_iterfield(config_class)
         else:
             yield from map(
@@ -62,7 +68,7 @@ class PydanticResolverStrategy(FieldResolverStrategy[FieldWrapper]):
 
     @classmethod
     def _as_v1_iterfield(
-        cls, config_class: type[v1.BaseModel]
+        cls, config_class: "type[v1.BaseModel]"
     ) -> Generator[FieldWrapper, Any, Any]:
         for field in config_class.__fields__.values():
             field_info = FieldInfo(
