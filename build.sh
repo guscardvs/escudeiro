@@ -1,6 +1,6 @@
 #!/bin/bash -e
 
-versions=('3.12' '3.13')
+versions=('3.12' '3.13' '3.14')
 compat=('manylinux_2_17' 'manylinux_2_28' 'manylinux_2_34')
 targets=(
     'x86_64-unknown-linux-gnu'
