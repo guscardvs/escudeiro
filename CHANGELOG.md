@@ -1,3 +1,39 @@
+## 0.3.0 (2025-11-16)
+
+### BREAKING CHANGE
+
+- sentinel objects are working now
+
+### Feat
+
+- update pydantic handling for compatibility with Python 3.14 and above; improve type casting in various modules
+- **sentinel.py**: added basic sentinel objects logic
+
+### Fix
+
+- **caster**: prevent joining and applying rules on safe-casted Caster instances
+- add Sentinels section to navigation in mkdocs.yml
+- **sentinels**: enhance Sentinel class with type parameter and initialization logic
+- add missing remote configuration to mkdocs.yml
+- **sentinels.py**: fixed type casting for enum-like sentinels
+- **sentinels**: renamed module name
+- add configuration context management with get_config, set_config, and get_env functions
+- enhance type casting utilities and add new tests for assert_notnone and cast_notnone
+- add is_instanceexact function and corresponding tests
+- implement registry to support non-enumable code
+- implement missing monad, pathx, and string utilities; update tests for new casting and path validation logic
+- **data**: no longer considers a private field with ref as empty
+
+### Refactor
+
+- streamline code formatting and enhance task scheduler setup
+
+## 0.2.8 (2025-06-15)
+
+### Fix
+
+- now properly supports sequence types on load and dump
+
 ## 0.2.17 (2025-08-18)
 
 ### Fix
