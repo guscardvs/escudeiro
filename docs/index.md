@@ -9,7 +9,7 @@ Escudeiro is a modern, extensible toolkit for Python that brings together advanc
 ## Features
 
 - **Slots-first, Descriptor-friendly Data Classes**  
-  Escudeiro’s `data` module is an attrs-like, slots-first data modeling system. It natively supports Python `__slots__`, advanced descriptors (like lazy fields and lazymethods), and is designed for extensibility.  
+  Escudeiro’s `data` module is an attrs-like, slots-first data modeling system. It natively supports Python `__slots__`, advanced descriptors (like lazy fields and lazymethods), and is designed for extensibility.
   - Out-of-the-box support for lazy fields, slotted descriptors, and custom field types.
   - Integrates seamlessly with async and sync lazy evaluation.
   - Serialization/deserialization to dict/JSON, schema generation, and type variable resolution.
@@ -26,6 +26,9 @@ Escudeiro is a modern, extensible toolkit for Python that brings together advanc
 - **Rust-powered Performance**  
   Performance-critical components are implemented in Rust (via PyO3), including file tree management and string utilities.
 
+- **No Clever Code, No Lock-in**
+  Escudeiro is written in plain, conventional Python. If you only need a small part, feel free to copy and vendor any excerpt—no magic, no hidden dependencies, just code that works.
+
 ---
 
 ## Installation
@@ -33,6 +36,7 @@ Escudeiro is a modern, extensible toolkit for Python that brings together advanc
 ```bash
 pip install escudeiro
 ```
+
 Requires Python 3.12+.
 
 ## Quick Start
@@ -101,13 +105,17 @@ pip install escudeiro[pydantic,msgspec]
 ```
 
 ## License
+
 This project is licensed under the Apache License 2.0. See the [LICENSE](LICENSE.md) file for details.
 
 ## Contributing
+
 We welcome contributions! Please open an issue or submit a pull request on GitHub.
 
 ## Changelog
+
 See the [CHANGELOG](CHANGELOG.md) for a detailed list of changes and updates.
 
 ## Author
+
 Escudeiro is developed and maintained by me.
