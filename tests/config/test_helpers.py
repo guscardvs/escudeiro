@@ -1,43 +1,19 @@
 from enum import Enum
 from pathlib import Path
-from typing import Any, Literal
+from typing import Literal
 
 import pytest
 
 from escudeiro.config import Config, EnvMapping
 from escudeiro.config.core.utils import (
-    boolean_cast,
     literal_cast,
     none_is_missing,
     valid_path,
 )
-from escudeiro.exc import InvalidCast, InvalidEnv, MissingName
+from escudeiro.exc import InvalidCast, MissingName
+from escudeiro.misc.functions import Caster
 from escudeiro.misc.pathx import is_valid_path
-from escudeiro.misc.strings import squote
-
-
-def test_boolean_returns_valid_bool():
-    mapping = EnvMapping(
-        {"first": "true", "second": "False", "third": "1", "fourth": "0"}
-    )
-    cfg = Config(mapping=mapping)
-
-    assert cfg("first", boolean_cast)
-    assert not cfg("second", boolean_cast)
-    assert cfg("third", boolean_cast)
-    assert not cfg("fourth", boolean_cast)
-    assert boolean_cast.strict(True) is True
-    assert boolean_cast.strict(False) is False
-
-
-def test_boolean_raises_invalid_cast():
-    """test boolean raises invalid cast if
-    no boolean definition matches"""
-    mapping = EnvMapping({"key": "value"})
-    cfg = Config(mapping=mapping)
-
-    with pytest.raises(InvalidCast):
-        _ = cfg("key", boolean_cast.strict)
+from escudeiro.misc.strings import as_boolean, squote
 
 
 def test_valid_path_returns_path_object(tmp_path: Path):
@@ -119,4 +95,4 @@ def test_none_is_missing():
     cfg = Config(mapping=mapping)
 
     with pytest.raises(MissingName):
-        _ = cfg("key", none_is_missing(boolean_cast.optional))
+        _ = cfg("key", none_is_missing(Caster(as_boolean).optional))

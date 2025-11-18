@@ -13,13 +13,19 @@ from typing import (
 )
 
 from escudeiro.config.core.config import Config
-from escudeiro.config.core.utils import LiteralType, boolean_cast, literal_cast
+from escudeiro.config.core.utils import LiteralType, literal_cast
 from escudeiro.config.interface import MISSING, ConfigLike
 from escudeiro.data import data, factory
 from escudeiro.data.utils.functions import disassemble_type
 from escudeiro.data.utils.typedef import DisassembledType
 from escudeiro.exc import MissingName
-from escudeiro.misc import exclamation, jsonx, make_lex_separator
+from escudeiro.misc import (
+    Caster,
+    as_boolean,
+    exclamation,
+    jsonx,
+    make_lex_separator,
+)
 
 from .dataclass import DataclassResolverStrategy
 from .interface import FieldResolverStrategy
@@ -45,7 +51,7 @@ def _resolve_cast(outer_type: type) -> tuple[Any, bool]:
     _sequences = (list, tuple, set)
     origin = get_origin(outer_type)
     if outer_type is bool:
-        return boolean_cast, False
+        return Caster(as_boolean), False
     if isinstance(outer_type, typing.cast(Any, LiteralType)):
         return literal_cast(outer_type), False
     with contextlib.suppress(ValueError):
@@ -216,9 +222,7 @@ class AdapterConfigFactory:
                 sep,
                 defaults=defaults,
             )
-        return _try_each(
-            *names, default=default, cast=cast, config=self.config
-        )
+        return _try_each(*names, default=default, cast=cast, config=self.config)
 
     def resolve_names(
         self, model_cls: type, resolver: FieldResolverStrategy, prefix: str

@@ -1,9 +1,9 @@
 # pyright: reportPrivateUsage=false
 # pyright: reportFunctionMemberAccess=false
 import asyncio
-from contextlib import aclosing
 import datetime
 import uuid
+from contextlib import aclosing
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
@@ -186,9 +186,7 @@ class TestTaskScheduler:
         assert scheduler._tasks[task_id].name == "test-one-time-task"
         assert scheduler._tasks[task_id].cron is None
         assert (
-            abs(
-                (scheduler._tasks[task_id].next_run - run_time).total_seconds()
-            )
+            abs((scheduler._tasks[task_id].next_run - run_time).total_seconds())
             < 1
         )  # Almost equal
 
@@ -583,8 +581,7 @@ class TestTaskScheduler:
             id_="test-id",
             func=mock_func,
             cron=None,
-            next_run=timezone.now()
-            - datetime.timedelta(seconds=1),  # Past due
+            next_run=timezone.now() - datetime.timedelta(seconds=1),  # Past due
             name="test-task",
         )
         scheduler._tasks["test-id"] = task
@@ -610,9 +607,7 @@ class TestTaskScheduler:
         TaskScheduler._calculate_and_sleep = _original_calc
         Task.status = _task_status
 
-    async def test_start_stop(
-        self, scheduler_with_mock_manager: TaskScheduler
-    ):
+    async def test_start_stop(self, scheduler_with_mock_manager: TaskScheduler):
         """Test starting and stopping the scheduler"""
         scheduler = scheduler_with_mock_manager
 
