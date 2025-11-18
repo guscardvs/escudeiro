@@ -1,3 +1,10 @@
+## 0.4.0 (2025-11-18)
+
+### Fix
+
+- Add CI workflow and multi-platform build scripts
+- Replace boolean_cast with Caster(as_boolean)
+
 ## 0.3.0 (2025-11-16)
 
 ### BREAKING CHANGE
