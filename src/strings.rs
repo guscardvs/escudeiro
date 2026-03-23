@@ -23,9 +23,11 @@ pub mod strings {
         })
     }
 
-    static CAMEL_CASE_REGEX: Lazy<Regex> = Lazy::new(|| Regex::new("([a-z])([A-Z])").unwrap());
-    static SNAKE_KEBAB_CASE_REGEX: Lazy<Regex> =
-        Lazy::new(|| Regex::new("(_|-)([a-zA-Z])").unwrap());
+    static CAMEL_CASE_REGEX: Lazy<Regex> =
+        Lazy::new(|| Regex::new("([a-z])([A-Z])").expect("CAMEL_CASE_REGEX is a valid pattern"));
+    static SNAKE_KEBAB_CASE_REGEX: Lazy<Regex> = Lazy::new(|| {
+        Regex::new("(_|-)([a-zA-Z])").expect("SNAKE_KEBAB_CASE_REGEX is a valid pattern")
+    });
 
     #[pyfunction]
     fn to_snake(value: String) -> String {
@@ -49,15 +51,12 @@ pub mod strings {
 
     #[pyfunction]
     fn to_pascal(value: String) -> String {
-        if value.is_empty() {
-            return value;
-        }
         let camelized = to_camel(value);
-        [
-            camelized.get(..1).unwrap().to_uppercase(),
-            camelized.get(1..).unwrap().to_string(),
-        ]
-        .join("")
+        let mut chars = camelized.chars();
+        match chars.next() {
+            None => camelized,
+            Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+        }
     }
 
     #[pyfunction]
