@@ -36,7 +36,7 @@ version_provider = "cargo"
 update_changelog_on_bump = true
 major_version_zero = true
 version_files = [
-    "escudeiro.__version__.py:__version__",
+    "escudeiro/__version__.py:__version__",
     "pyproject.toml:version",
 ]
 annotated_tag = true
