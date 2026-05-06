@@ -1,3 +1,23 @@
+## 0.5.0 (2026-05-06)
+
+### BREAKING CHANGE
+
+- **TaskManager.spawn** now returns **`Spawned`** (an awaitable handle) instead of
+  `None`. Await it to obtain the coroutine result or raised exception; use
+  `task_id`, `future_for`, `is_task_running`, and `is_task_queued` for
+  coordination and introspection.
+
+### Feat
+
+- **TaskManager**: `future_for`, `is_task_running`, `is_task_queued`, and
+  `wait_current_snapshot` for bounded waits over a snapshot of in-flight spawn
+  futures.
+- **Spawned**: re-exported from `escudeiro.ds` alongside `TaskManager`.
+
+### Docs
+
+- Task Manager documentation updated for the new spawn API and helpers.
+
 ## 0.4.0 (2025-11-18)
 
 ### Fix

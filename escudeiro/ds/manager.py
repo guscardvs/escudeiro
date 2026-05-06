@@ -4,12 +4,23 @@ import asyncio
 import contextlib
 import logging
 from collections.abc import Coroutine
-from typing import Self
+from typing import Any, Self
 from uuid import uuid4
 
 from escudeiro.data import data
 from escudeiro.lazyfields import is_initialized, lazyfield
 from escudeiro.misc import moving_window
+
+
+@data
+class Spawned[T]:
+    """Handle returned by :meth:`TaskManager.spawn` (awaitable, exposes ``task_id``)."""
+
+    task_id: str
+    future: asyncio.Future[T]
+
+    def __await__(self):
+        return self.future.__await__()
 
 
 @data
@@ -39,8 +50,8 @@ class TaskManager:
             )
 
     @lazyfield
-    def _pending_coro(self) -> asyncio.Queue[Coroutine]:
-        """Queue holding coroutines waiting to be executed."""
+    def _pending_coro(self) -> asyncio.Queue[tuple[str, Coroutine[Any, Any, Any]]]:
+        """Queue of (task_id, runner coroutine) waiting for a slot."""
         return asyncio.Queue()
 
     @lazyfield
@@ -59,15 +70,33 @@ class TaskManager:
         return {}
 
     @lazyfield
+    def _spawn_futures(self) -> dict[str, asyncio.Future[Any]]:
+        """task_id -> result future for spawned work (removed when the future completes)."""
+        return {}
+
+    @lazyfield
+    def _queued_task_ids(self) -> set[str]:
+        """task_ids accepted by spawn but not yet assigned a running asyncio.Task."""
+        return set()
+
+    @lazyfield
     def _worker_task(self) -> asyncio.Task | None:
         """Background task that processes the coroutine queue."""
         return None
 
-    def spawn(self, coro: Coroutine) -> None:
+    def spawn[T](self, coro: Coroutine[Any, Any, T]) -> Spawned[T]:
         """Enqueue a coroutine for execution.
+
+        Returns an awaitable handle whose :attr:`~Spawned.future` completes when
+        ``coro`` finishes. :attr:`~Spawned.task_id` matches entries in
+        :attr:`_running_tasks` while the work runs; use :meth:`future_for` and
+        related helpers to inspect state on the manager.
 
         Args:
             coro: The coroutine to be executed
+
+        Raises:
+            RuntimeError: If the manager is not started or there is no running event loop.
         """
         if (
             not is_initialized(self, "_worker_task")
@@ -76,7 +105,66 @@ class TaskManager:
             raise RuntimeError(
                 "TaskManager must be started before spawning tasks."
             )
-        self._pending_coro.put_nowait(coro)
+        task_id = uuid4().hex
+        future = asyncio.get_running_loop().create_future()
+        self._spawn_futures[task_id] = future
+        self._queued_task_ids.add(task_id)
+
+        async def _run() -> None:
+            self._queued_task_ids.discard(task_id)
+            try:
+                try:
+                    result = await coro
+                    if not future.done():
+                        future.set_result(result)
+                except asyncio.CancelledError:
+                    if not future.done():
+                        _ = future.cancel()
+                    raise
+                except Exception as e:
+                    if not future.done():
+                        future.set_exception(e)
+            finally:
+                _ = self._spawn_futures.pop(task_id, None)
+
+        self._pending_coro.put_nowait((task_id, _run()))
+        return Spawned(task_id, future)
+
+    def future_for(self, task_id: str) -> asyncio.Future[Any] | None:
+        """Return the result future for ``task_id``, or ``None`` if unknown or finished."""
+        return self._spawn_futures.get(task_id)
+
+    def is_task_running(self, task_id: str) -> bool:
+        """Whether ``task_id`` currently has an executing asyncio task."""
+        return task_id in self._running_tasks
+
+    def is_task_queued(self, task_id: str) -> bool:
+        """Whether ``task_id`` is still waiting for a worker slot."""
+        return task_id in self._queued_task_ids
+
+    async def wait_current_snapshot(
+        self, timeout: float | None = None
+    ) -> None:
+        """Wait for tasks that were already running when this method was entered.
+
+        Only :attr:`_spawn_futures` at the instant of the call is considered.
+        Spawns still queued for a slot are not included. Any :meth:`spawn` after
+        the snapshot is taken has no effect on this wait.
+
+        Args:
+            timeout: If set, maximum time to wait; propagates :exc:`asyncio.TimeoutError`.
+
+        Raises:
+            asyncio.TimeoutError: If ``timeout`` is not ``None`` and snapshot tasks
+                do not all finish within that many seconds.
+        """
+        snapshot = list(self._spawn_futures.values())
+        if not snapshot:
+            return
+        if timeout is None:
+            _ = await asyncio.gather(*snapshot)
+        else:
+            _ = await asyncio.wait_for(asyncio.gather(*snapshot), timeout)
 
     async def start(self) -> Self:
         """Start the task manager by launching the worker task
@@ -114,8 +202,8 @@ class TaskManager:
                         _ = coro_task.cancel()
                     break
 
-                # Get the next coroutine to execute
-                coro = coro_task.result()
+                # Get the next (task_id, runner coroutine) to execute
+                task_id, coro = coro_task.result()
                 with contextlib.suppress(asyncio.CancelledError):
                     _ = event_task.cancel()
 
@@ -123,7 +211,6 @@ class TaskManager:
                 _ = await self.slots.acquire()
 
                 # Create and track the new task
-                task_id = uuid4().hex
                 self._running_tasks[task_id] = self._create_task(coro, task_id)
 
         except Exception as e:
@@ -154,17 +241,19 @@ class TaskManager:
                     "Could not finish running tasks due to timeout."
                 )
 
-        # Process any remaining pending coroutines
-        tasks = []
+        # Process any remaining pending (task_id, runner) pairs
+        pending_runners: list[Coroutine[Any, Any, Any]] = []
         while not self._pending_coro.empty():
-            tasks.append(self._pending_coro.get_nowait())
+            _tid, runner = self._pending_coro.get_nowait()
+            pending_runners.append(runner)
 
-        if not tasks:
+        if not pending_runners:
             return
 
         try:
             _ = await asyncio.wait_for(
-                asyncio.gather(*tasks), self.close_timeout_seconds
+                asyncio.gather(*pending_runners),
+                self.close_timeout_seconds,
             )
         except TimeoutError:
             logging.error("Could not finish all pending tasks due to timeout.")

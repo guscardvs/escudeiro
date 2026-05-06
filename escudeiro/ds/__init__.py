@@ -1,7 +1,7 @@
 from .circuit import CircuitBreaker, with_circuit_breaker
 from .filetree.filetree import FileTree
 from .filetree.virtual import VirtualFileTree
-from .manager import TaskManager
+from .manager import Spawned, TaskManager
 from .pools.asyncio import AsyncPool
 from .pools.thread import ThreadPool
 from .registry import CallableRegistry, Registry
@@ -14,6 +14,7 @@ __all__ = [
     "CircuitBreaker",
     "CronInfo",
     "Task",
+    "Spawned",
     "TaskManager",
     "TaskScheduler",
     "ThreadPool",
