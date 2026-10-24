@@ -3,6 +3,8 @@ use pyo3::pymodule;
 #[pymodule]
 pub mod filetree {
     use pyo3::{PyResult, exceptions::PyValueError, pyclass, pyfunction, pymethods};
+    use std::collections::HashSet;
+    use std::hash::{Hash, Hasher};
     use std::sync::{Arc, Mutex};
 
     #[pyclass(eq, eq_int)]
@@ -89,11 +91,81 @@ pub mod filetree {
         }
     }
 
-    // Python-exposed node wrapper
-    #[pyclass]
+    fn lock_error() -> pyo3::PyErr {
+        PyValueError::new_err((
+            "Failed to acquire lock on node",
+            ErrorCodes::UnableToAcquireLock,
+        ))
+    }
+
+    /// A child name must be a single, plain path component: it can never leave its parent folder.
+    fn validate_child_name(name: &str) -> PyResult<()> {
+        let invalid =
+            name.is_empty() || name == "." || name == ".." || name.contains(['/', '\\', '\0']);
+        if invalid {
+            Err(PyValueError::new_err((
+                format!("Invalid node name {name:?}: must be a single path component"),
+                ErrorCodes::InvalidPath,
+            )))
+        } else {
+            Ok(())
+        }
+    }
+
+    // Python-exposed node wrapper. Equality and hash are node identity (the same underlying node).
+    #[pyclass(frozen, eq, hash)]
     #[derive(Clone)]
     pub struct FsNode {
         inner: NodeRef,
+    }
+
+    impl PartialEq for FsNode {
+        fn eq(&self, other: &Self) -> bool {
+            Arc::ptr_eq(&self.inner, &other.inner)
+        }
+    }
+
+    impl Eq for FsNode {}
+
+    impl Hash for FsNode {
+        fn hash<H: Hasher>(&self, state: &mut H) {
+            Arc::as_ptr(&self.inner).hash(state);
+        }
+    }
+
+    impl FsNode {
+        /// Lock the node for writing; a node is a directory while `content` is `None`.
+        fn writable(&self) -> PyResult<std::sync::MutexGuard<'_, FsNodeInternal>> {
+            let node = self.inner.lock().map_err(|_| lock_error())?;
+            if node.is_file() {
+                Ok(node)
+            } else {
+                Err(PyValueError::new_err((
+                    format!(
+                        "Trying to write into file {} where there is a folder",
+                        node.name
+                    ),
+                    ErrorCodes::InvalidPath,
+                )))
+            }
+        }
+
+        /// Whether `target` is this node or one of its descendants.
+        fn reaches(&self, target: &NodeRef) -> PyResult<bool> {
+            let mut seen: HashSet<*const Mutex<FsNodeInternal>> = HashSet::new();
+            let mut stack = vec![self.inner.clone()];
+            while let Some(current) = stack.pop() {
+                if Arc::ptr_eq(&current, target) {
+                    return Ok(true);
+                }
+                if !seen.insert(Arc::as_ptr(&current)) {
+                    continue;
+                }
+                let guard = current.lock().map_err(|_| lock_error())?;
+                stack.extend(guard.children.iter().cloned());
+            }
+            Ok(false)
+        }
     }
 
     #[pymethods]
@@ -185,68 +257,40 @@ pub mod filetree {
         }
 
         pub fn add_child(&self, node: &FsNode) -> PyResult<()> {
-            match self.inner.lock() {
-                Ok(mut self_node) => {
-                    if self_node.is_file() {
-                        Err(PyValueError::new_err((
-                            "Cannot add children to a file",
-                            ErrorCodes::InvalidPath,
-                        )))
-                    } else {
-                        self_node.children.push(node.inner.clone());
-                        Ok(())
-                    }
-                }
-                Err(_) => Err(PyValueError::new_err((
-                    "Failed to acquire lock on node",
-                    ErrorCodes::UnableToAcquireLock,
-                ))),
+            let name = node.name()?;
+            validate_child_name(&name)?;
+            // Checked before locking `self`: the walk may reach `self` and would deadlock on it.
+            if node.reaches(&self.inner)? {
+                return Err(PyValueError::new_err((
+                    format!("Adding {name:?} here would create a cycle"),
+                    ErrorCodes::InvalidPath,
+                )));
             }
-        }
-        fn write_content(&self, content: Vec<u8>) -> PyResult<()> {
-            match self.inner.lock() {
-                Ok(mut self_node) => {
-                    if self_node.children.len() > 0 {
-                        return Err(PyValueError::new_err((
-                            format!(
-                                "Trying to write into file {} where there is a folder",
-                                self_node.name
-                            ),
-                            ErrorCodes::InvalidPath,
-                        )));
-                    } else {
-                        self_node.content = Some(content);
-                        Ok(())
-                    }
-                }
-                Err(_) => Err(PyValueError::new_err((
-                    "Failed to acquire lock on node",
-                    ErrorCodes::UnableToAcquireLock,
-                ))),
+            let mut self_node = self.inner.lock().map_err(|_| lock_error())?;
+            if self_node.is_file() {
+                return Err(PyValueError::new_err((
+                    "Cannot add children to a file",
+                    ErrorCodes::InvalidPath,
+                )));
             }
+            if self_node.contains_shallow(&name) {
+                return Err(PyValueError::new_err((
+                    format!("A node named {name:?} already exists in this directory"),
+                    ErrorCodes::DuplicateFile,
+                )));
+            }
+            self_node.children.push(node.inner.clone());
+            Ok(())
         }
 
-        fn append_content(&self, other: Vec<u8>) -> PyResult<()> {
-            match self.inner.lock() {
-                Ok(mut self_node) => {
-                    if self_node.children.len() > 0 {
-                        return Err(PyValueError::new_err((
-                            format!(
-                                "Trying to write into file {} where there is a folder",
-                                self_node.name
-                            ),
-                            ErrorCodes::InvalidPath,
-                        )));
-                    } else {
-                        self_node.append_content(&mut other.clone());
-                        Ok(())
-                    }
-                }
-                Err(_) => Err(PyValueError::new_err((
-                    "Failed to acquire lock on node",
-                    ErrorCodes::UnableToAcquireLock,
-                ))),
-            }
+        fn write_content(&self, content: Vec<u8>) -> PyResult<()> {
+            self.writable()?.content = Some(content);
+            Ok(())
+        }
+
+        fn append_content(&self, mut other: Vec<u8>) -> PyResult<()> {
+            self.writable()?.append_content(&mut other);
+            Ok(())
         }
     }
 

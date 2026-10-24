@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 from contextlib import contextmanager
 from functools import partial
 from typing import Any, Self
@@ -34,13 +33,6 @@ class VirtualFileTree:
             folder = self._get_node(dirname, *path) or filetree.FsNode(dirname)
             vt = VirtualFileTree(folder)
             yield vt
-        except AssertionError as err:
-            if "PYTEST_CURRENT_TEST" in os.environ:
-                raise
-            else:
-                raise FailedFileOperation(
-                    "unable to complete virtual context after exception", err
-                ) from err
         except Exception as err:
             raise FailedFileOperation(
                 "unable to complete virtual context after exception", err
@@ -59,7 +51,10 @@ class VirtualFileTree:
     def merge(self, vt: VirtualFileTree, *path: str) -> None:
         if path:
             *restpath, parent = path
-            parent_node = self._internal.create_dir(parent, *restpath)
+            try:
+                parent_node = self._internal.create_dir(parent, *restpath)
+            except ValueError as err:
+                raise resolve_error(err)
         else:
             parent_node = self._internal.root
         if curnode := parent_node.get_shallow(vt.name):
@@ -67,15 +62,29 @@ class VirtualFileTree:
                 raise InvalidPath(
                     f"Trying to create folder {curnode.name} where there is a file."
                 )
-            else:
-                for child in vt.root.children:
-                    if curnode.get_shallow(child.name):
-                        raise InvalidPath(
-                            f"Conflict: {child.name} already exists in {curnode.name}"
-                        )
+            if curnode == vt.root:
+                return  # already the same node, nothing to merge
+            incoming = [
+                child
+                for child in vt.root.children
+                if (existing := curnode.get_shallow(child.name)) is None
+                or existing != child
+            ]
+            for child in incoming:
+                if curnode.contains_shallow(child.name):
+                    raise InvalidPath(
+                        f"Conflict: {child.name} already exists in {curnode.name}"
+                    )
+            try:
+                for child in incoming:
                     curnode.add_child(child)
+            except ValueError as err:
+                raise resolve_error(err)
         else:
-            parent_node.add_child(vt.root)
+            try:
+                parent_node.add_child(vt.root)
+            except ValueError as err:
+                raise resolve_error(err)
 
     def create_file(
         self,
@@ -97,7 +106,10 @@ class VirtualFileTree:
         else:
             node = parent.get_shallow(filename)
             if not node:
-                return file_maker()
+                try:
+                    return file_maker()
+                except ValueError as err:
+                    raise resolve_error(err)
             elif node.content is None:
                 raise InvalidPath(
                     f"Trying to create file {node.name} where there is a folder."

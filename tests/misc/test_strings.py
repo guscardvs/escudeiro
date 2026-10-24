@@ -118,8 +118,8 @@ class TestSentence:
     def test_sentence(self):
         assert strings.sentence("Hello world") == "Hello world."
         assert strings.sentence("Hello world.") == "Hello world."
-        assert strings.sentence("Hello world?") == "Hello world."
-        assert strings.sentence("Hello world!") == "Hello world."
+        assert strings.sentence("Hello world?") == "Hello world?"
+        assert strings.sentence("Hello world!") == "Hello world!"
 
 
 class TestExclamation:
