@@ -1,13 +1,19 @@
 import inspect
 import pathlib
-from collections.abc import Callable, Iterable, Iterator, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from pathlib import Path
 from typing import Any
 
 from escudeiro.data import data
 from escudeiro.lazyfields import lazyfield
 
-from .base import AutoDiscoveryHelper, PathConverter, StrOrPath, smart_import
+from .base import (
+    AutoDiscoveryHelper,
+    PathConverter,
+    StrOrPath,
+    smart_import,
+    sort_files_by_dependency,
+)
 
 type Validator = Callable[[Any], bool]
 
@@ -29,8 +35,8 @@ class RuntimeAutoDiscovery:
         load() -> Iterator[tuple[str, Any]]:
             Lazily loads modules that pass the validation criteria defined by `_validator`.
 
-        load_asdict() -> dict[str, Any]:
-            Loads discovered modules into a dictionary format.
+        asdict: dict[str, Any]
+            Discovered objects keyed by their module-qualified name.
 
     Example Usage:
         validator = lambda obj: inspect.isclass(obj) and issubclass(obj, MyBaseClass)
@@ -77,35 +83,26 @@ class RuntimeAutoDiscovery:
             include,
         )
 
-    def _itermod(self, path: Path) -> Iterable[tuple[str, Any]]:
-        """
-        Iterates over the members of the module specified by the given path.
-
-        Args:
-            path (Path): The path to the module to be loaded.
-
-        Yields:
-            Iterable[tuple[str, Any]]: An iterable of tuples containing member names
-            and their corresponding objects if they pass the validation.
-        """
-        resolver = self._internal.get_resolver()
-        mod = smart_import(resolver(path), resolver)
-
-        for name, obj in inspect.getmembers(mod):
-            if self._validator(obj):
-                yield (name, obj)
-
     def load(self) -> Iterator[tuple[str, Any]]:
         """
         Lazily loads modules that pass the validation criteria.
 
+        Each object is yielded once, under its module-qualified name
+        (`package.module.Name`), even if other modules import it.
+
         Returns:
-            Iterator[tuple[str, Any]]: Iterator yielding tuples of module names and their corresponding objects.
+            Iterator[tuple[str, Any]]: Iterator yielding tuples of qualified names and their corresponding objects.
         """
-        for file in self._internal.iterdir(self._internal.target_path):
-            for name, obj in self._itermod(file):
-                if self._validator(obj):
-                    yield name, obj
+        resolver = self._internal.get_resolver()
+        files = list(self._internal.iterdir(self._internal.target_path))
+        seen: set[int] = set()
+        for path in sort_files_by_dependency(list(map(resolver, files)), files):
+            modname = resolver(path)
+            mod = smart_import(modname, resolver)
+            for name, obj in inspect.getmembers(mod):
+                if id(obj) not in seen and self._validator(obj):
+                    seen.add(id(obj))
+                    yield f"{modname}.{name}", obj
 
     @lazyfield
     def asdict(self) -> dict[str, Any]:
@@ -113,7 +110,7 @@ class RuntimeAutoDiscovery:
         Loads discovered modules into a dictionary format.
 
         Returns:
-            dict[str, Any]: Dictionary mapping module names to their corresponding objects.
+            dict[str, Any]: Dictionary mapping qualified names to their corresponding objects.
         """
         return dict(self.load())
 

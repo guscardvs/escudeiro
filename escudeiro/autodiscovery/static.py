@@ -1,5 +1,4 @@
 import ast
-import os
 import re
 from collections.abc import Callable, Iterable, Iterator, Sequence
 from io import BytesIO
@@ -68,7 +67,7 @@ class StaticAutoDiscovery:
     _internal: AutoDiscoveryHelper
     _rounds: int
     _cache: CacheMap
-    _returned: dict[str, bool]
+    _yielded: set[int]
 
     def __init__(
         self,
@@ -92,31 +91,40 @@ class StaticAutoDiscovery:
             include,
         )
         self._cache = {}
-        self._returned = {}
+        self._yielded = set()
 
     @lazymethod
-    def load(self) -> Iterable[tuple[str, Any]]:
+    def load(self) -> list[tuple[str, Any]]:
         """
-        Lazily loads modules from the target directory based on validation criteria.
+        Loads modules from the target directory based on validation criteria.
+
+        The discovery runs once; later calls return the same list. Objects are
+        named by their module-qualified name (`package.module.Name`).
 
         Returns:
-            Iterable[tuple[str, Any]]: Generator yielding tuples of module names and their corresponding objects.
+            list[tuple[str, Any]]: Tuples of qualified names and their corresponding objects.
         """
+        return list(self._discover())
+
+    def _discover(self) -> Iterator[tuple[str, Any]]:
+        resolver = self._internal.get_resolver()
         for _ in range(self._rounds):
             files = list(self._internal.iterdir(self._internal.target_path))
             for path in sort_files_by_dependency(
-                [os.path.splitext(item)[0] for item in files], files
+                list(map(resolver, files)), files
             ):
                 module = self._parse_module(path)
-                resolver = self._internal.get_resolver()
                 modname = resolver(path)
                 for name, wants in self._validator(
                     self._cache, module, modname
                 ):
-                    for item in self._import_module([name], path):
-                        if wants in (True, None):
-                            self._returned[name] = True
-                            yield item
+                    for qualname, obj in self._import_module([name], path):
+                        if (
+                            wants in (True, None)
+                            and id(obj) not in self._yielded
+                        ):
+                            self._yielded.add(id(obj))
+                            yield qualname, obj
 
     def __iter__(self):
         yield from self.load()
@@ -150,7 +158,6 @@ class StaticAutoDiscovery:
         Yields:
             Iterable[tuple[str, Any]]: Generator yielding tuples of imported module names and their corresponding objects.
         """
-        names = [item for item in names if not self._returned.get(item)]
         resolver = self._internal.get_resolver()
         modname = resolver(path)
         mod = smart_import(modname, resolver)
@@ -158,8 +165,9 @@ class StaticAutoDiscovery:
             yield modname, mod
         for vname, obj in mod.__dict__.items():
             if vname in names:
+                # validators match base classes by bare name
                 self._cache[vname] = obj
-                yield vname, obj
+                yield f"{modname}.{vname}", obj
 
 
 class NOT_FOUND:
