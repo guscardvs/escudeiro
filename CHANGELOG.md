@@ -1,3 +1,16 @@
+## 0.5.1 (2026-10-24)
+
+### Fix
+
+- **ds**: harden scheduler, manager, worker, circuit breaker and pools
+- **config**: strict bools, Env ordering, env/default handling and secret-safe reprs
+- **data**: fix fromdict, forward refs, super(), hash/eq, kw_only and schema
+- **rust**: make strings, squire, filetree and cron deterministic and safe
+- **url**: make part edits live, support relative/opaque URLs, fix encoding
+- **context**: balance nested contexts, fix dellazy/is_initialized, port SQLAlchemy adapters
+- **misc**: correct iterx, lazymethod, Retry.map, strings, pathx and monad edge cases
+- **autodiscovery**: correct imports, naming, ordering and traversal
+
 ## 0.5.0 (2026-05-06)
 
 ### BREAKING CHANGE
