@@ -70,7 +70,7 @@ def test_repr_returns_the_expected_string():
     another = Another("test@example.com", "valerica", "Very Important Secret")
 
     assert repr(person) == "Person(name='Jane Doe', age=30)"
-    assert repr(another) == "Another(email='test@example.com', name='Valerica')"
+    assert repr(another) == "Another(email='test@example.com', name=Valerica)"
 
 
 def test_defaults_work_as_expected():
@@ -647,7 +647,7 @@ def test_define_conversions_fail_if_key_missing_without_defaults():
     )
 
     with pytest.raises(KeyError) as exc_info:
-        _ = fromdict(A, {})  
+        _ = fromdict(A, {})
     assert (
         next_or(exc_info.value.args)
         == "Key 'x' or alias 'xVal' not found"
@@ -666,22 +666,26 @@ def test_transforms_work_correctly():
 
     assert a.y == 6.0
 
+
 def test_transform_works_with_mutable():
     @data(frozen=False)
     class A:
         names: list[str]
-        comma_separated:  str = private(
-            ref=lambda ainstance: ", ".join(ainstance.names) if ainstance.names else ""
+        comma_separated: str = private(
+            ref=lambda ainstance: ", ".join(ainstance.names)
+            if ainstance.names
+            else ""
         )
+
     a = A(["Alice", "Bob", "Charlie"])
     assert a.comma_separated == "Alice, Bob, Charlie"
 
-    
 
 def test_squire_serialize_properly_handles_sequence_types():
     @data
     class B:
         z: int
+
     @data
     class A:
         x: int
@@ -693,5 +697,7 @@ def test_squire_serialize_properly_handles_sequence_types():
         a: int
         b: set[int] = field(default_factory=set)
 
-    assert fromdict(A, {"x": 1, "y": [{"z": 2}, {"z": 3}], "w": [1.0, 2.0]}) == A(1, [B(2), B(3)], [1.0, 2.0])
+    assert fromdict(
+        A, {"x": 1, "y": [{"z": 2}, {"z": 3}], "w": [1.0, 2.0]}
+    ) == A(1, [B(2), B(3)], [1.0, 2.0])
     assert fromdict(C, {"a": 1, "b": [2, 3]}) == C(1, {2, 3})

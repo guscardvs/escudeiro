@@ -1,19 +1,21 @@
 import dataclasses
+import json
 import sys
 from collections.abc import Callable, Generator, Mapping, Sequence
 from datetime import date, datetime, time, timedelta
 from enum import Enum
+from types import FunctionType
 from typing import (
     Any,
     ForwardRef,
     NoReturn,
-    Union,  # pyright:ignore[reportDeprecated]
     dataclass_transform,
     get_args,
+    get_origin,
     overload,
 )
 
-from typing_extensions import TypeIs, evaluate_forward_ref
+from typing_extensions import TypeIs
 
 from escudeiro.data.converters import fromdict, squire
 from escudeiro.data.schema import (
@@ -31,7 +33,12 @@ from escudeiro.misc.typex import is_hashable
 from .field_ import Field, FieldInfo, field
 from .methods import ArgumentType, MethodBuilder, MethodType
 from .resolver import FieldsBuilder
-from .utils.functions import disassemble_type, indent, remove_left_underscores
+from .utils.functions import (
+    evaluate_ref,
+    indent,
+    is_union,
+    remove_left_underscores,
+)
 from .utils.functions import frozen as freeze
 from .utils.typedef import (
     MISSING,
@@ -213,13 +220,30 @@ def build_cls(cls: type, field_map: FieldMap, **opts: Any) -> Any:
     if opts["dataclass_fields"]:
         clsdict |= _make_dataclass_fields(field_map)
     maybe_freeze = freeze if frozen else lambda a: a
-    return maybe_freeze(
-        type(cls)(
-            cls.__name__,
-            cls.__bases__,
-            clsdict,
-        )
-    )
+    new_cls = type(cls)(cls.__name__, cls.__bases__, clsdict)
+    _repoint_class_cells(new_cls)
+    return maybe_freeze(new_cls)
+
+
+def _repoint_class_cells(cls: type) -> None:
+    """Methods compiled in the original class body close over it through the
+    hidden `__class__` cell (used by zero-argument `super()`); the rebuilt
+    class must replace it there."""
+    for value in cls.__dict__.values():
+        if isinstance(value, property):
+            funcs = (value.fget, value.fset, value.fdel)
+        elif isinstance(value, classmethod | staticmethod):
+            funcs = (value.__func__,)
+        else:
+            funcs = (value,)
+        for func in funcs:
+            if not isinstance(func, FunctionType) or not func.__closure__:
+                continue
+            freevars = func.__code__.co_freevars
+            if "__class__" in freevars:
+                func.__closure__[
+                    freevars.index("__class__")
+                ].cell_contents = cls
 
 
 def _get_clsdict(cls: type, field_map: FieldMap):
@@ -385,7 +409,7 @@ def _get_repr(cls: type, field_map: FieldMap):
         else:
             field_repr_call = f"__repr_{f.name}"
             globs[field_repr_call] = f.repr
-            fields.append(f"{f.name}={{{field_repr_call}(self.{f.name})!r}}")
+            fields.append(f"{f.name}={{{field_repr_call}(self.{f.name})}}")
     fieldstr = ", ".join(fields)
     returnline = f"return f'{cls.__name__}({fieldstr})'"
     return (
@@ -408,11 +432,14 @@ def _get_eq(cls: type, field_map: FieldMap):
     )
     if fields_to_compare:
         return _build_field_comparison(builder, fields_to_compare, cls)
-    returnline = "return _object_eq(self, other)"
+    # nothing to compare: any two instances of the same class are equal
     return (
-        builder.add_glob("_object_eq", object.__eq__)
-        .add_annotation("return", bool)
-        .add_scriptline(returnline)
+        builder.add_annotation("return", bool)
+        .add_scriptlines(
+            "if type(other) is type(self):",
+            indent("return True"),
+            "return NotImplemented",
+        )
         .build(cls)
     )
 
@@ -455,10 +482,34 @@ def make_unresolved_ref(cls: type, field: Field):
     return _unresolved_ref
 
 
+def _optional_arm(annotation: Any) -> Any:
+    """The wrapped type of `X | None`/`Optional[X]`, else MISSING.
+    Other unions (`int | str`) have no single type to convert to."""
+    if not is_union(annotation):
+        return MISSING
+    args = get_args(annotation)
+    arms = [arg for arg in args if arg is not type(None)]
+    return arms[0] if len(arms) == 1 and len(args) == 2 else MISSING
+
+
+def _wrap_optional(val: str, inner: str) -> str:
+    return val if inner == val else f"(None if {val} is None else {inner})"
+
+
+def _globber(globs: dict[str, Any]) -> Callable[[Any], str]:
+    def glob(value: Any) -> str:
+        name = f"_g{len(globs)}"
+        globs[name] = value
+        return name
+
+    return glob
+
+
 def get_parse_dict(cls: type, field_map: FieldMap):
     namespace = {}
     args = []
     alias_args = []
+    globs: dict[str, Any] = {}
     builder = (
         MethodBuilder(
             "__parse_dict__",
@@ -473,17 +524,23 @@ def get_parse_dict(cls: type, field_map: FieldMap):
     )
     mod_globalns = sys.modules[cls.__module__].__dict__
     for name, f in field_map.items():
-        field_type = f.origin or f.declared_type
         result, resolved = _resolve_forward_ref(
-            field_type, cls, f, mod_globalns
+            f.declared_type, cls, f, mod_globalns
         )
         if not resolved:
             _ = builder.add_glob(f"_asdict_{f.name}", result)
             arg = f"'{{name}}': _asdict_{f.name}(self.{name})"
+        elif f.asdict_:
+            _ = builder.add_glob(f"_asdict_{f.name}", f.asdict_)
+            arg = f"'{{name}}': _asdict_{f.name}(self.{f.name})"
         else:
-            arg = _create_argument_for_field(f, field_type, builder.add_glob)
+            expr = _parse_dict_expr(
+                f.declared_type, f"self.{f.name}", _globber(globs)
+            )
+            arg = f"'{{name}}': {expr}"
         args.append(arg.format(name=name))
         alias_args.append(arg.format(name=f.alias))
+    _ = builder.merge_globs(globs)
     namespace |= builder.add_scriptline(
         "\n    ".join(
             (
@@ -508,96 +565,69 @@ def _resolve_forward_ref(
     if not isinstance(field_type, ForwardRef) or field.asdict_:
         return field_type, True
     try:
-        parsed = evaluate_forward_ref(
-            field_type,
-            globals=mod_globalns,
-            locals={cls.__name__: cls},
-            type_params=None,
-        )
+        parsed = evaluate_ref(field_type, mod_globalns, {cls.__name__: cls})
     except NameError:
         return make_unresolved_ref(cls, field), False
-    return (
-        (disassemble_type(parsed), True)
-        if parsed is not None
-        else (
-            make_unresolved_ref(cls, field),
-            False,
+    if parsed is None:
+        return make_unresolved_ref(cls, field), False
+    return parsed, True
+
+
+def _parse_dict_expr(
+    annotation: Any, val: str, glob: Callable[[Any], str]
+) -> str:
+    """Expression turning the attribute `val` into its dict representation."""
+    if (arm := _optional_arm(annotation)) is not MISSING:
+        return _wrap_optional(val, _parse_dict_expr(arm, val, glob))
+    if is_union(annotation):
+        return val
+    origin = get_origin(annotation) or annotation
+    if hasattr(origin, "__parse_dict__"):
+        return f"{val}.__parse_dict__(alias)"
+    if not isinstance(origin, type):
+        return val
+    if issubclass(origin, list | tuple | set | dict):
+        return _parse_dict_sequence_expr(
+            origin, get_args(annotation), val, glob
         )
-    )
+    return val
 
 
-def _create_argument_for_field(
-    f: Field,
-    field_type: type | ForwardRef,
-    add_glob: Callable[[str, Callable], Any],
-):
-    if f.asdict_:
-        add_glob(f"_asdict_{f.name}", f.asdict_)
-        return f"'{{name}}': _asdict_{f.name}(self.{f.name})"
-    elif hasattr(field_type, "__parse_dict__"):
-        return f"'{{name}}': self.{f.name}.__parse_dict__(alias)"
-    elif not isinstance(field_type, type):
-        return f"'{{name}}': self.{f.name}"
-    elif issubclass(field_type, list | tuple | set | dict):
-        add_glob(f"field_type_{f.name}", field_type)
-        return _get_parse_dict_sequence_arg(f)
-    else:
-        return f"'{{name}}': self.{f.name}"
-
-
-def _get_parse_dict_sequence_arg(f: Field) -> str:
-    field_type = f.origin or f.declared_type
-    if not f.args:
-        return f"'{{name}}': self.{f.name}"
-    elif (
-        len(f.args) > 1
-        and issubclass(field_type, tuple)
-        and (len(f.args) != 2 or f.args[1] is not Ellipsis)  # pyright: ignore[reportUnnecessaryComparison]
+def _parse_dict_sequence_expr(
+    origin: type, args: Sequence[Any], val: str, glob: Callable[[Any], str]
+) -> str:
+    if not args:
+        return val
+    if (
+        len(args) > 1
+        and issubclass(origin, tuple)
+        and (len(args) != 2 or args[1] is not Ellipsis)
     ):
-        idx_to_parse = [
-            idx
-            for idx, item in enumerate(f.args)
+        if not any(hasattr(item, "__parse_dict__") for item in args):
+            return val
+        items = ", ".join(
+            f"{val}[{idx}].__parse_dict__(alias)"
             if hasattr(item, "__parse_dict__")
-        ]
-        if not idx_to_parse:
-            return f"'{{name}}': self.{f.name}"
-        tuple_args = ", ".join(
-            f"self.{f.name}[{idx}]"
-            if idx not in idx_to_parse
-            else f"self.{f.name}[{idx}].__parse_dict__(alias)"
-            for idx, _ in enumerate(f.args)
+            else f"{val}[{idx}]"
+            for idx, item in enumerate(args)
         )
-        return f"'{{name}}': ({tuple_args})"
-    elif len(f.args) == 1 or issubclass(field_type, tuple):
-        (element_type, *_) = f.args
-        if hasattr(element_type, "__parse_dict__"):
-            return (
-                f"'{{name}}': field_type_{f.name}(x.__parse_dict__(alias)"
-                f" for x in self.{f.name})"
-            )
-        return f"'{{name}}': deserialize(self.{f.name}, alias)"
-    elif issubclass(field_type, Mapping):
-        return f"'{{name}}': deserialize_mapping(self.{f.name}, alias)"
-    else:
-        return f"'{{name}}': deserialize(self.{f.name}, alias)"
+        return f"({items})"
+    if len(args) == 1 or issubclass(origin, tuple):
+        if hasattr(args[0], "__parse_dict__"):
+            return f"{glob(origin)}(x.__parse_dict__(alias) for x in {val})"
+        return f"deserialize({val}, alias)"
+    if issubclass(origin, Mapping):
+        return f"deserialize_mapping({val}, alias)"
+    return f"deserialize({val}, alias)"
 
 
-def _dict_get(
-    mapping: Mapping,
-    name: str,
-    alias: str,
-    sentinel: Any,
-    default: Any,
-    dict_get: Callable[[Mapping, str, Any], Any],
-):
-    val = dict_get(mapping, alias, sentinel)
-    if val is not sentinel:
-        return val
-    val = dict_get(mapping, name, sentinel)
-    if val is not sentinel:
-        return val
-    if default is not sentinel:
-        return default
+def _dict_get(mapping: Mapping, name: str, alias: str, sentinel: Any) -> Any:
+    """Value stored under the alias, else the name, else `sentinel`."""
+    val = mapping.get(alias, sentinel)
+    return mapping.get(name, sentinel) if val is sentinel else val
+
+
+def _missing_key(mapping: Mapping, name: str, alias: str) -> NoReturn:
     raise KeyError(
         f"Key '{name}' or alias '{alias}' not found in mapping: {mapping!r}"
         + " and no default value provided.",
@@ -605,14 +635,15 @@ def _dict_get(
 
 
 def get_squire_serialize(cls: type, field_map: FieldMap):
-    args = []
+    globs: dict[str, Any] = {}
+    glob = _globber(globs)
     builder = (
         MethodBuilder(
             "__squire_serialize__",
             {
                 "dict_get": _dict_get,
+                "missing_key": _missing_key,
                 "sentinel": object(),
-                "_dict_get": dict.get,
             },
         )
         .add_arg("mapping", ArgumentType.POSITIONAL)
@@ -620,79 +651,85 @@ def get_squire_serialize(cls: type, field_map: FieldMap):
         .add_annotation("mapping", Mapping[str, Any])
         .set_type(MethodType.CLASS)
     )
+    args = []
     for f in field_map.values():
-        field_type = f.origin or f.declared_type
-        _ = builder.add_glob(f"_field_type_{f.name}", field_type)
-        default_line = "sentinel"
-        if f.has_default:
-            _ = builder.add_glob(f"_field_type_{f.name}_default", f.default)
-            default_line = f"_field_type_{f.name}_default"
-        elif f.has_default_factory:
-            _ = builder.add_glob(
-                f"_field_type_{f.name}_default_factory", f.default
-            )
-            default_line = f"_field_type_{f.name}_default_factory()"
-        get_line = f"dict_get(mapping, {f.name!r}, {f.alias!r}, sentinel, {default_line}, _dict_get)"
+        if not f.init:  # set by __init__, never read from the mapping
+            continue
+        var = f"_v_{f.name}"
         if f.fromdict:
-            _ = builder.add_glob(f"_field_type_{f.name}", f.fromdict)
-            arg = f"_field_type_{f.name}({get_line})"
-        elif hasattr(field_type, "__squire_serialize__"):
-            arg = f"_field_type_{f.name}.__squire_serialize__({get_line})"
-        elif field_type in (date, datetime):
-            arg = f"_field_type_{f.name}.fromisoformat({get_line})"
-        elif not isinstance(field_type, type):  # pyright: ignore[reportUnnecessaryIsInstance]
-            arg = f"({get_line})"
-        elif issubclass(field_type, list | tuple | set | dict):
-            arg, globs = _get_gserialize_sequence_arg(f, get_line)
-            _ = builder.merge_globs(globs)
+            convert = f"{glob(f.fromdict)}({var})"
         else:
-            arg = f"_field_type_{f.name}({get_line})"
-        args.append(f"{f.alias}={arg}")
-    _ = builder.add_scriptline(f"return cls({', '.join(args)})")
+            convert = _serialize_expr(f.declared_type, var, glob)
+        if f.has_default:
+            missing = glob(f.default)
+        elif f.has_default_factory:
+            missing = f"{glob(f.default)}()"
+        else:
+            missing = f"missing_key(mapping, {f.name!r}, {f.alias!r})"
+        _ = builder.add_scriptlines(
+            f"{var} = dict_get(mapping, {f.name!r}, {f.alias!r}, sentinel)",
+            f"if {var} is sentinel:",
+            indent(f"{var} = {missing}"),
+            *(
+                ("else:", indent(f"{var} = {convert}"))
+                if convert != var
+                else ()
+            ),
+        )
+        args.append(f"{remove_left_underscores(f.alias)}={var}")
+    _ = builder.merge_globs(globs).add_scriptline(
+        f"return cls({', '.join(args)})"
+    )
     return builder.build(cls)
 
 
-def _get_gserialize_sequence_arg(
-    field: Field,
-    get_line: str,
-) -> tuple[str, Mapping[str, Any]]:
-    field_type = field.origin or field.declared_type
-    globs = {}
-    returnline = get_line
-    if not field.args:
-        pass
-    elif (
-        len(field.args) > 1
-        and issubclass(field_type, tuple)
-        and (len(field.args) != 2 or field.args[1] is not Ellipsis)  # pyright: ignore[reportUnnecessaryComparison]
+def _serialize_expr(
+    annotation: Any, val: str, glob: Callable[[Any], str]
+) -> str:
+    """Expression converting the raw mapping value `val` into `annotation`."""
+    if (arm := _optional_arm(annotation)) is not MISSING:
+        return _wrap_optional(val, _serialize_expr(arm, val, glob))
+    if is_union(annotation):  # several candidates: nothing to convert to
+        return val
+    origin = get_origin(annotation) or annotation
+    if hasattr(origin, "__squire_serialize__"):
+        return f"{glob(origin)}.__squire_serialize__({val})"
+    if origin in (date, datetime):
+        return f"{glob(origin)}.fromisoformat({val})"
+    if not isinstance(origin, type):
+        return val
+    if issubclass(origin, list | tuple | set | dict):
+        return _serialize_sequence_expr(origin, get_args(annotation), val, glob)
+    return f"{glob(origin)}({val})"
+
+
+def _serialize_sequence_expr(
+    origin: type, args: Sequence[Any], val: str, glob: Callable[[Any], str]
+) -> str:
+    if not args:
+        return val
+    if (
+        len(args) > 1
+        and issubclass(origin, tuple)
+        and (len(args) != 2 or args[1] is not Ellipsis)
     ):
-        if idx_to_parse := [
-            idx
-            for idx, item in enumerate(field.args)
+        if not any(hasattr(item, "__squire_serialize__") for item in args):
+            return val
+        items = ", ".join(
+            f"{glob(item)}.__squire_serialize__({val}[{idx}])"
             if hasattr(item, "__squire_serialize__")
-        ]:
-            for idx in idx_to_parse:
-                globs[f"_elem_type_{field.name}_{idx}"] = field.args[idx]
-            tuple_args = ", ".join(
-                f"{get_line}[{idx}]"
-                if idx not in idx_to_parse
-                else f"_elem_type_{field.name}_{idx}."
-                + f"__squire_serialize__({get_line}[{idx}])"
-                for idx, _ in enumerate(field.args)
+            else f"{val}[{idx}]"
+            for idx, item in enumerate(args)
+        )
+        return f"({items})"
+    if len(args) == 1 or issubclass(origin, tuple):
+        if hasattr(args[0], "__squire_serialize__"):
+            return (
+                f"{glob(origin)}({glob(args[0])}.__squire_serialize__(x)"
+                f" for x in {val})"
             )
-            returnline = f"({tuple_args})"
-    elif len(field.args) == 1 or issubclass(field_type, tuple):
-        (element_type, *_) = field.args
-        if hasattr(element_type, "__squire_serialize__"):
-            globs[f"_elem_type_{field.name}"] = element_type
-            returnline = (
-                f"_field_type_{field.name}("
-                + f"_elem_type_{field.name}.__squire_serialize__(x)"
-                + f" for x in {get_line})"
-            )
-        else:
-            returnline = f"_field_type_{field.name}({get_line})"
-    return returnline, globs
+        return f"{glob(origin)}({val})"
+    return val
 
 
 def _get_ne(cls: type):
@@ -772,7 +809,9 @@ def _make_comparator_builder(name: str, signal: str, field_map: FieldMap):
 def _get_hash(cls: type, fields_map: FieldMap, wants_hash: bool):
     builder = MethodBuilder("__hash__")
     args = ["type(self)"]
-    for f in fields_map.values():
+    # hash only what __eq__ compares, so equal instances hash equal
+    eq_fields = [f for f in fields_map.values() if f.eq is not False]
+    for f in eq_fields:
         if not f.hash:
             continue
         arg = f"self.{f.name}"
@@ -784,7 +823,7 @@ def _get_hash(cls: type, fields_map: FieldMap, wants_hash: bool):
             glob = f"_hash_{f.name}"
             arg = f"{glob}({arg})"
             _ = builder.add_glob(glob, f.eq)
-        elif not is_hashable(f.declared_type):
+        elif not is_hashable(f.declared_type, unresolved_ok=True):
             if not wants_hash:
                 continue
             raise TypeError(
@@ -792,8 +831,9 @@ def _get_hash(cls: type, fields_map: FieldMap, wants_hash: bool):
             )
         args.append(arg)
 
-    # if it only contains the class and no field qualifies for hashing
-    if len(args) == 1:
+    # no field qualified for hashing (a class with nothing to compare hashes
+    # to a constant)
+    if len(args) == 1 and eq_fields:
         if not wants_hash:
             return {}
         raise TypeError("No hashable field found for class")
@@ -849,7 +889,7 @@ def _get_pydantic_handlers(cls: type, fields_map: FieldMap):
     cls_schema = Schema(
         cls.__name__,
         "object",
-        [f.argname for f in fields_map.values() if f.default is MISSING],
+        _required_names(fields_map),
         properties=_generate_schema_lines(fields_map),
     )
     return namespace | builder.add_scriptline(
@@ -857,43 +897,43 @@ def _get_pydantic_handlers(cls: type, fields_map: FieldMap):
     ).build(cls)
 
 
+def _required_names(fields_map: FieldMap) -> list[str]:
+    return [
+        f.argname
+        for f in fields_map.values()
+        if f.default is MISSING and f.init
+    ]
+
+
 def _generate_schema_lines(fields_map: FieldMap) -> dict[str, HasStr]:
-    schemas: dict[str, HasStr] = {}
-    for f in fields_map.values():
-        field_type = f.field_type
-        if current_map := getattr(field_type, "__squire_attrs__", None):
-            required = [
-                f.argname for f in current_map.values() if f.default is MISSING
-            ]
-            schemas[f.argname] = Schema(
-                field_type.__name__,
-                "object",
-                required,
-                properties=_generate_schema_lines(current_map),
-            )
-        else:
-            schemas[f.argname] = _resolve_schematype(f.field_type, f.args)
-    return schemas
-
-
-def _resolve_schematype(field_type: type, args: Sequence[type]) -> HasToString:
-    _type_map = {
-        type(None): "null",
-        bool: "boolean",
-        str: "string",
-        float: "number",
-        int: "integer",
+    return {
+        f.argname: _resolve_schematype(f.declared_type)
+        for f in fields_map.values()
     }
-    if val := _type_map.get(field_type):
+
+
+_schema_type_map = {
+    type(None): "null",
+    bool: "boolean",
+    str: "string",
+    float: "number",
+    int: "integer",
+}
+
+
+def _resolve_schematype(field_type: Any) -> HasToString:
+    origin = get_origin(field_type) or field_type
+    args = get_args(field_type)
+    if val := _schema_type_map.get(origin):
         return DictSchema(val)
-    if field_type in (list, set, tuple):
+    if origin in (list, set, tuple):
         extras = {}
-        if args:
+        if items := [arg for arg in args if arg is not Ellipsis]:
             extras["items"] = Items(
-                *(_resolve_schematype(arg, get_args(arg)) for arg in args)
+                *(_resolve_schematype(arg) for arg in items)
             )
         return DictSchema("array", **extras)
-    if field_type is dict:
+    if origin is dict:
         extras = {}
         if args:
             keyt, valt = args
@@ -902,48 +942,57 @@ def _resolve_schematype(field_type: type, args: Sequence[type]) -> HasToString:
                     f"Cannot generate schema for dict with key type {keyt}",
                     keyt,
                 )
-            extras["additional_properties"] = _resolve_schematype(
-                valt, get_args(valt)
-            )
+            extras["additional_properties"] = _resolve_schematype(valt)
         return DictSchema("object", **extras)
-    if current_map := getattr(field_type, "__squire_attrs__", None):
-        required = [
-            f.argname for f in current_map.values() if f.default is MISSING
-        ]
+    if current_map := getattr(origin, "__squire_attrs__", None):
         return Schema(
-            field_type.__name__,
+            origin.__name__,
             "object",
-            required,
+            _required_names(current_map),
             properties=_generate_schema_lines(current_map),
         )
-    if field_type is Union:  # pyright: ignore[reportDeprecated]
-        choices = [_resolve_schematype(arg, get_args(arg)) for arg in args]
-        return ListSchema("anyOf", *choices)
-    if issubclass(field_type, Enum):
-        # remove from parents cls, enum.Enum and object
-        # uses only the first of the mro
-        parent, *_ = field_type.mro()[1:-2]
-        if parent:
-            if ft := _type_map.get(parent):
-                type_name = ft
-            else:
-                raise NotImplementedError
-        else:
-            type_name = "string"
-        return Schema(
-            field_type.__name__,
-            type_name,
-            enum=Items(*[f'"{item.value}"' for item in field_type]),
-        )
-    if issubclass(field_type, datetime):
+    if is_union(field_type):
+        return ListSchema("anyOf", *(_resolve_schematype(arg) for arg in args))
+    if not isinstance(origin, type):
+        raise NotImplementedError(f"Cannot generate schema for {field_type!r}")
+    if issubclass(origin, Enum):
+        return _resolve_enum_schema(origin)
+    if issubclass(origin, datetime):
         return DictSchema("string", format=str_cast("date-time"))
-    if issubclass(field_type, date):
+    if issubclass(origin, date):
         return DictSchema("string", format=str_cast("date"))
-    if issubclass(field_type, time):
+    if issubclass(origin, time):
         return DictSchema("string", format=str_cast("time"))
-    if issubclass(field_type, timedelta):
+    if issubclass(origin, timedelta):
         return DictSchema("number", format=str_cast("time-delta"))
-    raise NotImplementedError
+    raise NotImplementedError(f"Cannot generate schema for {field_type!r}")
+
+
+def _enum_value_kind(value: Any) -> str:
+    for type_, kind in _schema_type_map.items():
+        if isinstance(value, type_):
+            return kind
+    return ""
+
+
+def _resolve_enum_schema(enum_type: type[Enum]) -> Schema:
+    values = [item.value for item in enum_type]
+    kinds = {_enum_value_kind(value) for value in values}
+    if kinds == {"integer", "number"}:
+        kinds = {"number"}
+    if len(kinds) != 1 or "" in kinds:
+        raise NotImplementedError(
+            f"Cannot generate schema for enum {enum_type.__name__}: values"
+            + " must all be str, int, float or bool"
+        )
+    # the schema is emitted as python source: str values go through json
+    # (valid in both), everything else through repr
+    literals = [
+        json.dumps(value) if isinstance(value, str) else repr(value)
+        for value in values
+    ]
+    (kind,) = kinds
+    return Schema(enum_type.__name__, kind, enum=Items(*literals))
 
 
 def _make_dataclass_fields(fields_map: FieldMap):

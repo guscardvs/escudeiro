@@ -77,13 +77,15 @@ class MethodBuilder:
     def build(self, cls: type) -> dict[str, Any]:
         method_name = self.prepare_method_name(cls)
         method_annotations, method_script = self.make_methodstr(method_name)
+        globs = self.globs
         if cls.__module__ in sys.modules:
-            _ = self.merge_globs(sys.modules[cls.__module__].__dict__)
+            # helpers win over same-named module globals
+            globs = sys.modules[cls.__module__].__dict__ | self.globs
         func = _make_method(
             method_name,
             method_script,
             _generate_unique_filename(cls, method_name),
-            self.globs,
+            globs,
         )
         func.__annotations__ = method_annotations
         stamp_func(func)

@@ -23,8 +23,9 @@ class Factory[**P, T]:
         self.func = func
         self._initialized = True
 
-    def __name__(self):
-        return self.func.__name__
+    @property
+    def __name__(self) -> str:
+        return getattr(self.func, "__name__", repr(self.func))
 
     def __call__(self, *args: P.args, **kwds: P.kwargs) -> T:
         return self.func(*args, **kwds)

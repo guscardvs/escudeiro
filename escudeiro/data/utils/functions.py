@@ -1,8 +1,85 @@
+import inspect
+import keyword
 import re
-from collections.abc import Callable, Sequence
-from typing import Any, ForwardRef, NoReturn, TypeVar, get_args, get_origin
+import sys
+import typing
+from collections.abc import Callable, Mapping, Sequence
+from types import UnionType
+from typing import (
+    Any,
+    ForwardRef,
+    NoReturn,
+    TypeVar,
+    Union,  # pyright:ignore[reportDeprecated]
+    get_args,
+    get_origin,
+)
 
 from .typedef import UNINITIALIZED, DisassembledType, TypeNode
+
+if sys.version_info >= (3, 14):
+    import annotationlib
+
+    def get_class_annotations(cls: type) -> dict[str, Any]:
+        """Own annotations of `cls`; names that are not defined yet (e.g.
+        a self-reference) come back as `ForwardRef`s instead of raising."""
+        return annotationlib.get_annotations(
+            cls, format=annotationlib.Format.FORWARDREF
+        )
+else:
+
+    def get_class_annotations(cls: type) -> dict[str, Any]:
+        """Own annotations of `cls` (evaluated eagerly before 3.14)."""
+        return inspect.get_annotations(cls)
+
+
+if sys.version_info >= (3, 14):
+
+    def evaluate_ref(
+        ref: ForwardRef,
+        globalns: dict[str, Any],
+        localns: Mapping[str, Any] | None = None,
+    ) -> Any:
+        """Evaluate a ForwardRef against the given namespaces."""
+        return typing.evaluate_forward_ref(
+            ref,
+            globals=globalns,
+            locals=localns,
+            type_params=(),  # pyright: ignore[reportArgumentType]
+        )
+else:
+    _eval_kwargs: dict[str, Any] = {"recursive_guard": frozenset()}
+    if "type_params" in inspect.signature(ForwardRef._evaluate).parameters:
+        _eval_kwargs["type_params"] = ()  # warns on 3.13 when left out
+
+    def evaluate_ref(
+        ref: ForwardRef,
+        globalns: dict[str, Any],
+        localns: Mapping[str, Any] | None = None,
+    ) -> Any:
+        """Evaluate a ForwardRef against the given namespaces.
+
+        `ForwardRef` caches its value (and typing shares equal refs such as
+        `Optional["Node"]` between modules), so a locals mapping that is not
+        the globals one is always passed to force a fresh evaluation."""
+        return ref._evaluate(  # pyright: ignore[reportDeprecated]
+            globalns, {} if localns is None else localns, **_eval_kwargs
+        )
+
+
+def is_union(annotation: Any) -> bool:
+    """`Optional[X]`, `Union[...]` and `X | Y` on every supported version."""
+    return get_origin(annotation) in (Union, UnionType)  # pyright:ignore[reportDeprecated]
+
+
+def validate_alias(field_name: str, alias: str) -> None:
+    """The alias becomes the (left-stripped) `__init__` parameter name."""
+    arg = remove_left_underscores(alias)
+    if not arg.isidentifier() or keyword.iskeyword(arg):
+        raise ValueError(
+            f"Invalid alias {alias!r} for field {field_name!r}:"
+            + " it must be usable as a parameter name"
+        )
 
 
 def disassemble_type(annotation: Any) -> DisassembledType:
@@ -86,6 +163,8 @@ def get_forwardrefs(
 
 
 def rebuild_type(origin: type, args: Sequence[Any]) -> type:
+    if origin in (Union, UnionType):  # pyright:ignore[reportDeprecated]
+        return Union[tuple(args)]  # pyright:ignore[reportDeprecated,reportReturnType]  # noqa: UP007
     if not hasattr(origin, "__getitem__"):
         raise TypeError("Unable to support rebuild, type has no __getitem__")
     try:
@@ -122,7 +201,10 @@ def rebuild_type_from_depth(node: TypeNode) -> type:
 
 
 def frozen_setattr(self: object, name: str, value: Any):
-    if getattr(self, name, UNINITIALIZED) is UNINITIALIZED:
+    if (
+        name in getattr(type(self), "__squire_attrs__", ())
+        and getattr(self, name, UNINITIALIZED) is UNINITIALIZED
+    ):
         return object.__setattr__(self, name, value)
     raise AttributeError(
         f"Class {type(self)} is frozen, and attribute {name} cannot be set"
