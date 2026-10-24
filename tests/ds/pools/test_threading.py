@@ -144,3 +144,109 @@ def test_thread_pool_recycle():
     # Release all resources and dispose of the pool
     pool.release(t3)
     pool.dispose()
+
+
+# --- regressions: ticket accounting, recycle semantics ------------------
+
+
+class Plain:
+    pass
+
+
+def _in_thread(fn, timeout: float = 1.0):
+    """Run ``fn`` in a daemon thread; fail instead of hanging."""
+    out: list[object] = []
+    t = threading.Thread(target=lambda: out.append(fn()), daemon=True)
+    t.start()
+    t.join(timeout)
+    assert not t.is_alive(), "call blocked"
+    return out[0]
+
+
+def test_dispose_does_not_shrink_capacity():
+    pool = ThreadPool(Plain, lambda r: None, pool_size=3)
+    for r in [pool.acquire() for _ in range(3)]:
+        pool.release(r)
+    pool.dispose()
+
+    assert pool._available == 3
+    # all three tickets are still usable (was: the next acquire blocked)
+    held = [_in_thread(pool.acquire) for _ in range(3)]
+    assert len({id(r) for r in held}) == 3
+
+
+def test_dispose_with_checked_out_resources_keeps_accounting():
+    pool = ThreadPool(Plain, lambda r: None, pool_size=3)
+    out = pool.acquire()
+    pool.dispose()
+    assert pool._available == 2
+    pool.release(out)
+    assert pool._available == 3
+
+
+def test_failed_factory_returns_the_ticket():
+    calls = 0
+
+    def factory():
+        nonlocal calls
+        calls += 1
+        if calls <= 3:
+            raise RuntimeError("factory down")
+        return Plain()
+
+    pool = ThreadPool(factory, lambda r: None, pool_size=3)
+    for _ in range(3):
+        with pytest.raises(RuntimeError):
+            pool.acquire()
+    assert pool._available == 3  # was: 0
+    assert _in_thread(pool.acquire) is not None
+
+
+def test_failed_recycle_returns_the_ticket():
+    broken = False
+
+    def releaser(_: Plain):
+        if broken:
+            raise RuntimeError("cannot release")
+
+    pool = ThreadPool(Plain, releaser, pool_size=1, pool_recycle=0.01)
+    r = pool.acquire()
+    pool.release(r)
+    time.sleep(0.03)
+    broken = True
+    with pytest.raises(RuntimeError):
+        pool.acquire()
+    assert pool._available == 1
+
+
+def test_blocked_acquire_takes_over_the_released_ticket():
+    pool = ThreadPool(Plain, lambda r: None, pool_size=1)
+    first = pool.acquire()
+    got: list[Plain] = []
+    t = threading.Thread(target=lambda: got.append(pool.acquire()), daemon=True)
+    t.start()
+    time.sleep(0.05)
+    assert not got  # blocked: the only ticket is out
+    pool.release(first)
+    t.join(1)
+    assert got == [first]
+    # the waiter now holds the ticket (was: released one counted twice)
+    assert pool._available == 0
+    pool.release(got[0])
+    assert pool._available == 1
+
+
+def test_prefill_respects_checked_out_resources():
+    pool = ThreadPool(Plain, lambda r: None, pool_size=2)
+    out = pool.acquire()
+    pool.prefill(5)
+    assert pool.resources.qsize() == 1
+    pool.release(out)  # must not overflow the queue
+    assert pool.resources.qsize() == 2
+
+
+def test_pool_recycle_zero_disables_recycling():
+    pool = ThreadPool(Plain, lambda r: None, pool_recycle=0)
+    r = pool.acquire()
+    pool.release(r)
+    assert pool.acquire() is r  # was: recycled on every acquire

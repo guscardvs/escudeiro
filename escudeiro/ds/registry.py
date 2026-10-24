@@ -24,7 +24,7 @@ class Registry[T: Enum, S]:
         validate() -> None: Validates that all enum keys are present in the registry.
         lookup(key: T) -> S: Looks up a value by its key.
         __getitem__(key: T) -> S: Allows dictionary-like access to the registry.
-        __iter__() -> Iterator[str]: Iterates over the registry keys.
+        __iter__() -> Iterator[T]: Iterates over the registry keys.
         __len__() -> int: Returns the number of items in the registry.
     """
 
@@ -58,7 +58,7 @@ class Registry[T: Enum, S]:
 
     def __iter__(self):
         """Iterates over the registry keys."""
-        return iter(map(str, self.registry))
+        return iter(self.registry)
 
     def __len__(self):
         """Returns the number of items in the registry."""

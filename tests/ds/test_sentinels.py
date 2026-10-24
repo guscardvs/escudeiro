@@ -1,6 +1,5 @@
 import pickle
-
-import pytest
+from functools import lru_cache
 
 from escudeiro.ds.sentinels import Sentinel, _registry, sentinel
 
@@ -165,3 +164,41 @@ class TestSentinelDecorator:
 
         # assert first insertions were not replaced
         assert _registry["tests.ds.test_sentinels:FIRST_CALL"] is FIRST_CALL
+
+
+class TestSentinelHash:
+    def test_plain_sentinel_is_hashable(self) -> None:
+        @sentinel
+        class MISSING_HASH:
+            pass
+
+        assert hash(MISSING_HASH) == hash(MISSING_HASH)
+        assert {MISSING_HASH: 1}[MISSING_HASH] == 1
+        assert MISSING_HASH in {MISSING_HASH}
+
+    def test_member_sentinels_are_dict_keys(self) -> None:
+        @sentinel
+        class HASHED_STATUS:
+            A = 1
+            B = 2
+
+        mapping = {HASHED_STATUS.A: "a", HASHED_STATUS.B: "b"}
+        assert mapping[HASHED_STATUS.A] == "a"
+        # equal objects hash equal: a member equals its value
+        assert HASHED_STATUS.A == 1
+        assert hash(HASHED_STATUS.A) == hash(1)
+
+    def test_usable_as_lru_cache_argument(self) -> None:
+        @sentinel
+        class CACHE_MISSING:
+            pass
+
+        @lru_cache
+        def f(arg: object) -> object:
+            return arg
+
+        assert f(CACHE_MISSING) is CACHE_MISSING
+
+    def test_unhashable_value_falls_back_to_identity(self) -> None:
+        odd = Sentinel("odd", "tests.ds", [1, 2])
+        assert hash(odd) == object.__hash__(odd)

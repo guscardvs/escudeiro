@@ -1,8 +1,8 @@
 import asyncio
 import inspect
 import uuid
-from collections.abc import Awaitable, Callable
-from datetime import datetime, timedelta, tzinfo
+from collections.abc import Awaitable, Callable, Coroutine
+from datetime import UTC, datetime, tzinfo
 from typing import TYPE_CHECKING, Any
 
 from escudeiro.data import data, field
@@ -20,6 +20,8 @@ class Task:
     next_run: datetime
     name: str | None = None
     is_running: bool = False
+    retired: bool = False
+    """Set once the task will never run again (removal pending)."""
     remove_callback: Callable[[str], Awaitable[None]] = field(
         default=make_noop(asyncio=True)
     )
@@ -33,6 +35,18 @@ class Task:
     def lock(self) -> asyncio.Lock:
         """Asyncio lock for thread-safe task state management."""
         return asyncio.Lock()
+
+    def claim(self) -> bool:
+        """Synchronously mark the task as running (see :meth:`set`).
+
+        Returns:
+            False if it was already running, True if the caller now owns it
+        """
+        if self.is_running:
+            return False
+        self.is_running = True
+        self._count += 1
+        return True
 
     async def run_count(self):
         """Get the number of times this task has executed.
@@ -69,13 +83,13 @@ class CronInfo:
 
     Attributes:
         cronexpr: String representing the cron schedule
-        timezone: Timezone for the schedule (defaults to local timezone)
+        timezone: Timezone for the schedule: a ``datetime.timezone``, a
+            ``zoneinfo.ZoneInfo`` (follows DST) or an IANA name. Defaults to
+            UTC; pass a ``ZoneInfo`` for local-time schedules.
     """
 
     cronexpr: str
-    timezone: tzinfo = field(
-        default_factory=lambda: datetime.now().astimezone().tzinfo
-    )
+    timezone: tzinfo | str = UTC
 
 
 @data(frozen=False)
@@ -93,9 +107,11 @@ class TaskScheduler:
     log_info: Callable[[str], Any] = make_noop()
     log_warning: Callable[[str], Any] = make_noop()
     log_exception: Callable[[str], Any] = make_noop()
+    clock: Callable[[], datetime] = now
+    """Source of the current (timezone-aware) time; injectable for tests."""
 
     def __post_init__(self):
-        _ = self._tasks, self._running, self.manager
+        _ = self._tasks, self._running, self.manager, self._wake
 
     @lazyfield
     def _tasks(self) -> dict[str, Task]:
@@ -106,6 +122,15 @@ class TaskScheduler:
     def _running(self):
         """Flag indicating if the scheduler is active."""
         return False
+
+    @lazyfield
+    def _wake(self) -> asyncio.Event:
+        """Wakes the loop early: task added/removed or scheduler stopped.
+
+        Replaced by a fresh event on every :meth:`start`, so a stopped
+        scheduler can be restarted.
+        """
+        return asyncio.Event()
 
     @lazyfield
     def manager(self) -> TaskManager:
@@ -160,7 +185,7 @@ class TaskScheduler:
             cron_expr.cronexpr, cron_expr.timezone
         )
         if cronexpr is not None:
-            cronexpr.update()
+            cronexpr.update_after(self.clock())
             run_at = cronexpr.next_run
 
         if TYPE_CHECKING:
@@ -169,15 +194,14 @@ class TaskScheduler:
         task = Task(
             id_=task_id,
             func=func,
-            cron=cronjob.CronExpr(cron_expr.cronexpr, cron_expr.timezone)
-            if cron_expr
-            else None,
+            cron=cronexpr,
             next_run=run_at,
             name=name or func.__name__,
             remove_callback=remove_callback or make_noop(asyncio=True),
         )
 
         self._tasks[task_id] = task
+        self._wake.set()  # it may be due before whatever the loop sleeps for
         self.log_info(f"Task '{task.name}' scheduled with ID {task_id}")
         return task_id
 
@@ -228,6 +252,7 @@ class TaskScheduler:
         if task_id not in self._tasks:
             return False
         task = self._tasks.pop(task_id)
+        self._wake.set()
         await callback(task_id)
         self.log_info(f"Taskt with ID {task_id} removed '{task.name}'")
         return True
@@ -260,107 +285,113 @@ class TaskScheduler:
             Handles both synchronous and asynchronous functions,
             manages task state, and handles rescheduling/removal
         """
-        if await task.status():
+        if not task.claim():
             self.log_warning(f"Task '{task.name}' is already running")
             return
+        await self._run_claimed(task)
 
+    async def _run_claimed(self, task: Task) -> None:
+        """Run a task already claimed with :meth:`Task.claim`, then reschedule it."""
         self.log_info(f"Starting task '{task.name}'")
-        await task.set()
         try:
             if inspect.iscoroutinefunction(task.func):
                 await task.func()
             else:
-                await asyncio.to_thread(task.func)
+                result = await asyncio.to_thread(task.func)
+                # e.g. ``lambda: coro()``: the awaitable is the real work.
+                if inspect.isawaitable(result):
+                    await result
             self.log_info(f"Task '{task.name}' finished.")
 
         except Exception as err:
             self.log_exception(f"Task '{task.name}' failed: {err}")
 
         finally:
-            await task.reset()
-            self._reschedule_task(task)
+            task.is_running = False
+            self._reschedule_task(task, self.clock())
 
-    def _reschedule_task(self, task: Task) -> None:
+    def _reschedule_task(self, task: Task, finished_at: datetime) -> None:
         """Reschedule a recurring task or queue for removal.
 
         Args:
             task: Task to reschedule
+            finished_at: Aware datetime at which the run finished; the next run
+                is the first cron match strictly after it (evaluated in the
+                cron's own timezone).
 
         Note:
-            For cron-based tasks, calculates next run time.
-            One-time tasks are queued for removal.
+            For cron-based tasks, calculates next run time. One-time tasks, and
+            cron tasks whose next run cannot be computed, are retired and queued
+            for removal instead of staying due.
         """
         if task.cron:
             try:
-                task.cron.update_after(
-                    now().replace(second=0, microsecond=0)
-                    + timedelta(minutes=1)
-                )
+                task.cron.update_after(finished_at)
                 task.next_run = task.cron.next_run
+                return
             except Exception as e:
                 self.log_exception(
                     f"Failed to reschedule task '{task.name}': {e}"
                 )
-                # Handle failed rescheduling
-        else:
-            self.manager.spawn(self.remove_task(task.id_, task.remove_callback))
+        task.retired = True
+        _ = self._spawn(self.remove_task(task.id_, task.remove_callback))
+
+    def _spawn(self, coro: Coroutine[Any, Any, Any]):
+        try:
+            return self.manager.spawn(coro)
+        except Exception:
+            coro.close()  # never scheduled, avoid "never awaited"
+            raise
+
+    def _launch_due_tasks(self) -> None:
+        """Start every due task as its own supervised task (never awaited here)."""
+        timestamp = self.clock()
+        for task in list(self._tasks.values()):
+            if task.retired or task.next_run > timestamp:
+                continue
+            if not task.claim():
+                continue
+            try:
+                _ = self._spawn(self._run_claimed(task))
+            except Exception as err:
+                task.is_running = False
+                self.log_exception(f"Could not start task '{task.name}': {err}")
+
+    def _sleep_time(self) -> float:
+        """Seconds until the next task is due (default interval if none)."""
+        upcoming = [
+            task.next_run for task in self._tasks.values() if not task.retired
+        ]
+        if not upcoming:
+            return self.default_sleep_interval
+        return max(0, (min(upcoming) - self.clock()).total_seconds())
 
     async def _scheduler_loop(self) -> None:
-        """Main scheduling loop that executes due tasks.
+        """Main scheduling loop that launches due tasks.
 
-        Continuously checks for and executes due tasks,
-        sleeping between checks based on next scheduled run.
+        Launches due tasks without waiting for them, then sleeps until the next
+        one is due or until woken (task added/removed, scheduler stopped).
         """
-        while self._running:
-            timestamp = now()
+        wake = self._wake
+        while self._running and self._wake is wake:
+            wake.clear()
+            self._launch_due_tasks()
+            await self._calculate_and_sleep(wake)
 
-            # Find and execute due tasks
-            due_tasks = [
-                task
-                for task in self._tasks.values()
-                if task.next_run <= timestamp
-            ]
-
-            # Check status only for tasks we'll actually run
-            tasks_to_run = []
-            for task in due_tasks:
-                if not await task.status():
-                    tasks_to_run.append(task)
-
-            if tasks_to_run:
-                await self._execute_tasks(tasks_to_run)
-
-            await self._calculate_and_sleep()
-
-    async def _calculate_and_sleep(self):
-        """Calculate optimal sleep time before next task check.
+    async def _calculate_and_sleep(self, wake: asyncio.Event | None = None):
+        """Sleep until the next scheduled task or until woken.
 
         Sleeps until next scheduled task or default interval.
         """
-        # Sleep for a short interval before next check
-        if self._tasks:
-            next_run_time = min(task.next_run for task in self._tasks.values())
-            sleep_time = max(0, (next_run_time - now()).total_seconds())
-        else:
-            sleep_time = self.default_sleep_interval
-        await asyncio.sleep(sleep_time)
-
-    async def _execute_tasks(self, tasks: list[Task]) -> None:
-        """Execute multiple tasks concurrently.
-
-        Args:
-            tasks: List of Task instances to execute
-
-        Note:
-            Gathers results and handles any exceptions
-        """
-        results = await asyncio.gather(
-            *(self._execute_task(task) for task in tasks),
-            return_exceptions=True,
-        )
-        for task, result in zip(tasks, results):
-            if isinstance(result, Exception):
-                self.log_exception(f"Task '{task.name}' failed {result}")
+        wake = wake or self._wake
+        sleep_time = self._sleep_time()
+        if sleep_time <= 0:
+            await asyncio.sleep(0)
+            return
+        try:
+            _ = await asyncio.wait_for(wake.wait(), sleep_time)
+        except TimeoutError:
+            pass
 
     async def setup(self) -> None:
         """Setup method to initialize the scheduler.
@@ -371,18 +402,27 @@ class TaskScheduler:
         self.log_info("Task scheduler setup complete.")
 
     async def start(self) -> None:
-        """Start the scheduler event loop."""
+        """Run the scheduler loop until :meth:`stop` is called.
+
+        A stopped scheduler can be started again.
+        """
         if self._running:
             return
 
         self._running = True
-        await self.setup()
-        self.log_info("Task scheduler started.")
-        await self._scheduler_loop()
+        wake = self._wake = asyncio.Event()
+        try:
+            await self.setup()
+            self.log_info("Task scheduler started.")
+            await self._scheduler_loop()
+        finally:
+            if self._wake is wake:  # not already restarted
+                self._running = False
 
     async def stop(self) -> None:
-        """Stop the scheduler event loop."""
+        """Stop the scheduler event loop (wakes it immediately)."""
         self._running = False
+        self._wake.set()
         self.log_info("Task scheduler stopped")
         await self.manager.close()
 

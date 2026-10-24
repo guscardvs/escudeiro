@@ -124,7 +124,6 @@ async def test_decorator_functionality():
         # Test execution after unfreeze
         result = await test_func()
         assert result == "decorator success"
-        assert execution_count == 4
 
     # Test failing execution
     for task in asyncio.as_completed((test_func(should_fail=True), check())):
@@ -132,6 +131,8 @@ async def test_decorator_functionality():
             await task
         except ValueError:
             pass
+    # failing call + its retry after the freeze + the call made by check()
+    assert execution_count == 4
 
 
 async def test_custom_freeze_function(circuit_breaker: CircuitBreaker):
@@ -185,15 +186,20 @@ async def test_custom_error_handler(circuit_breaker: CircuitBreaker):
 
 
 async def test_freeze_function_exception(circuit_breaker: CircuitBreaker):
-    """Test that exceptions in the freeze function are handled properly."""
+    """A failing freeze function surfaces once and never wedges the breaker."""
 
     async def failing_freeze():
         raise RuntimeError("Freeze function failed")
 
     circuit_breaker.freeze_function = failing_freeze
+    calls = 0
 
     async def test_func():
-        raise ValueError("Initial error")
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise ValueError("Initial error")
+        return "ok"
 
     async def check():
         assert circuit_breaker.is_frozen
@@ -201,11 +207,58 @@ async def test_freeze_function_exception(circuit_breaker: CircuitBreaker):
         assert circuit_breaker._freeze_future is not None
         await circuit_breaker._freeze_future
 
-    # First execution triggers freeze
-    with pytest.raises(RuntimeError):
+    # First execution triggers freeze, whose failure reaches its callers
+    with pytest.raises(RuntimeError, match="Freeze function failed"):
         _ = await asyncio.gather(circuit_breaker.execute(test_func), check())
 
-    assert circuit_breaker.is_frozen
+    # ... but the breaker is not stuck frozen: later calls really run func
+    assert not circuit_breaker.is_frozen
+    assert await circuit_breaker.execute(test_func) == "ok"
+    assert await circuit_breaker.execute(test_func) == "ok"
+    assert calls == 3  # was: 1, every later call re-raised the stale error
+
+
+async def test_cancelled_waiter_does_not_cancel_the_others():
+    cb = CircuitBreaker(freeze_function=partial(asyncio.sleep, 0.2))
+    calls = 0
+
+    async def f():
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise RuntimeError("x")
+        return "ok"
+
+    first = asyncio.create_task(cb.execute(f))
+    await asyncio.sleep(0.02)  # first failed, breaker frozen
+    assert cb.is_frozen
+    b = asyncio.create_task(cb.execute(f))
+    c = asyncio.create_task(cb.execute(f))
+    await asyncio.sleep(0.02)
+    _ = c.cancel()
+    results = await asyncio.gather(first, b, c, return_exceptions=True)
+    assert results[0] == "ok" and results[1] == "ok"
+    assert isinstance(results[2], asyncio.CancelledError)
+
+
+async def test_cancelled_unfreeze_task_releases_waiters():
+    cb = CircuitBreaker(freeze_function=partial(asyncio.sleep, 30))
+
+    async def f():
+        raise RuntimeError("x")
+
+    waiter = asyncio.create_task(cb.execute(f))
+    await asyncio.sleep(0.02)
+    assert cb.is_frozen
+    assert cb._unfreeze_task is not None  # strong reference is kept
+    _ = cb._unfreeze_task.cancel()
+
+    # waiters are resolved (cancelled), not left hanging; breaker unfrozen
+    done, pending = await asyncio.wait([waiter], timeout=1)
+    assert not pending
+    assert waiter.cancelled()
+    assert not cb.is_frozen
+    assert cb._freeze_future is not None and cb._freeze_future.done()
 
 
 async def test_reentry_during_frozen_state(circuit_breaker: CircuitBreaker):

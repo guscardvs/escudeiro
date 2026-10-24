@@ -61,6 +61,17 @@ class Sentinel[T]:
             return NotImplemented
         return self._value == value
 
+    @override
+    def __hash__(self) -> int:
+        # Must agree with __eq__: a valued member equals its value, so it
+        # hashes like it; plain sentinels (and unhashable values) use identity.
+        if self._value is not self:
+            try:
+                return hash(self._value)
+            except TypeError:
+                pass
+        return object.__hash__(self)
+
 
 def sentinel[T](cls: type[T]) -> T:
     """Unique sentinel values.

@@ -1,13 +1,13 @@
 import asyncio
-from collections.abc import Awaitable, Callable, Coroutine, Hashable
-from typing import Any, ClassVar, Self
+import weakref
+from collections.abc import Awaitable, Callable, Hashable
+from typing import Any, ClassVar, Self, cast
 
 from escudeiro.data import data
 from escudeiro.lazyfields import lazyfield
-from escudeiro.misc import filter_isinstance
 
 
-@data
+@data(slots=False)
 class WorkerQueue[T: Hashable, R]:
     """An asynchronous worker queue with caching capabilities.
 
@@ -20,8 +20,10 @@ class WorkerQueue[T: Hashable, R]:
         R: The result type
     """
 
-    _global_registry: ClassVar[dict[int, "WorkerQueue"]] = {}
-    """Class-level registry tracking all active WorkerQueue instances"""
+    _global_registry: ClassVar[
+        weakref.WeakValueDictionary[int, "WorkerQueue"]
+    ] = weakref.WeakValueDictionary()
+    """Class-level registry tracking live WorkerQueue instances (weakly)"""
 
     worker: Callable[[T], Awaitable[R]]
     """Async function that processes items"""
@@ -50,6 +52,11 @@ class WorkerQueue[T: Hashable, R]:
         return {}
 
     @lazyfield
+    def _errors(self) -> list[Exception]:
+        """Non-fatal failures (e.g. cache_set) reported when shutting down"""
+        return []
+
+    @lazyfield
     def _id(self) -> int:
         """Unique identifier for this worker queue instance"""
         return id(self)
@@ -70,6 +77,7 @@ class WorkerQueue[T: Hashable, R]:
         self._worker_queue
         self._worker_task
         self._ongoing
+        self._errors
         self._id
         self._maxtasks
         self._event
@@ -94,21 +102,50 @@ class WorkerQueue[T: Hashable, R]:
             - If already being processed, waits for existing result
             - Otherwise, queues the item for processing
             - Automatically starts worker if not running
+            - Requesters share one future but wait on it shielded: a timeout or
+              cancellation of one requester does not affect the others
+            - A failed item is forgotten, so requiring it again retries
         """
         result = await self.cache_get(item)
         if result is not None:
             return result
-        if item in self._ongoing:
-            return await self._ongoing[item]
+        future = self._ongoing.get(item)
+        if future is None:
+            future = asyncio.get_running_loop().create_future()
+            self._ongoing[item] = future
+            try:
+                # Before the put: a full queue is only drained by a worker.
+                self._ensure_running()
+                await self._worker_queue.put(item)
+                # The worker may have finished while put was waiting.
+                self._ensure_running()
+            except BaseException:
+                # Cancelled/failed put: don't leave a future nobody resolves.
+                self._settle(item, exc=asyncio.CancelledError())
+                raise
 
-        self._ongoing[item] = asyncio.Future()
-        await self._worker_queue.put(item)
+        return await asyncio.shield(future)
 
+    def _ensure_running(self) -> None:
         if not self.running:
-            await self.aclose()
             WorkerQueue._worker_task.__set__(self, self._open())
 
-        return await self._ongoing[item]
+    def _settle(
+        self,
+        item: T,
+        result: R | None = None,
+        exc: BaseException | None = None,
+    ) -> None:
+        """Forget ``item`` and resolve its shared future, if still pending."""
+        future = self._ongoing.pop(item, None)
+        if future is None or future.done():
+            return
+        if isinstance(exc, asyncio.CancelledError):
+            _ = future.cancel()
+        elif exc is not None:
+            future.set_exception(exc)
+        else:
+            future.set_result(result)
 
     def _open(self) -> asyncio.Task:
         """Start the worker task.
@@ -128,150 +165,156 @@ class WorkerQueue[T: Hashable, R]:
         return asyncio.create_task(self._worker())
 
     async def _worker(self) -> None:
-        """Main worker coroutine that processes items from the queue.
+        """Main worker coroutine: runs the consumers until shutdown.
 
         Note:
-            - Processes items concurrently up to _maxtasks
-            - Collects exceptions during processing
-            - Handles graceful shutdown when event is set
+            - Runs up to _maxtasks consumers concurrently
+            - On shutdown idle consumers are cancelled, busy ones finish their
+              current item, then everything still pending is finished inline
             - Raises collected exceptions at shutdown if any occurred
+            - Whatever happens, no pending future is left unresolved
         """
-        excs = None
-        while not self._event.is_set():
-            # Process up to _maxtasks concurrently
-            excs = list(
-                filter_isinstance(
-                    Exception,
-                    await asyncio.gather(
-                        *(
-                            self._handle_request()
-                            for _ in range(self._maxtasks)
-                        ),
-                        return_exceptions=True,
-                    ),
-                )
-            )
+        consumers: list[asyncio.Task[None]] = []
+        busy: set[asyncio.Task[None]] = set()
+        timeouts: list[asyncio.TimeoutError] = []
+        try:
+            if not self._event.is_set():
+                consumers = [
+                    asyncio.create_task(self._consume(busy))
+                    for _ in range(self._maxtasks)
+                ]
+                _ = await self._event.wait()
+                for consumer in consumers:
+                    if consumer not in busy:
+                        _ = consumer.cancel()
+            # Busy consumers see the event and stop after their item.
+            _ = await asyncio.gather(*consumers, return_exceptions=True)
+            timeouts = await self._finish_pending()
+        finally:
+            for consumer in consumers:
+                _ = consumer.cancel()
+            for key in list(self._ongoing):
+                self._settle(key, exc=asyncio.CancelledError())
 
-        # Graceful shutdown - finish pending tasks
-        tasks: list[asyncio.Task] = []
-        finisher_function, timeouts = self._finisher()
-        for key, ongoing in self._ongoing.items():
-            if ongoing.done():
-                continue
-            task = asyncio.create_task(finisher_function(key, ongoing))
-            tasks.append(task)
-
-        _ = await asyncio.gather(*tasks)
-        if timeouts:
-            excs = (excs or []) + timeouts
+        excs: list[Exception] = [*self._errors, *timeouts]
+        self._errors.clear()
         if excs:
             raise ExceptionGroup(
                 "WorkerQueue stopped due to the following exceptions", excs
             )
 
-    async def _handle_request(self) -> None:
-        """Process a single item from the queue.
+    async def _consume(self, busy: set[asyncio.Task[None]]) -> None:
+        """Take items off the queue one at a time until shutdown."""
+        me = cast(asyncio.Task[None], asyncio.current_task())
+        while not self._event.is_set():
+            item = await self._worker_queue.get()
+            busy.add(me)
+            try:
+                await self._process(item)
+            finally:
+                busy.discard(me)
+                self._worker_queue.task_done()
+
+    async def _process(self, item: T) -> None:
+        """Run the worker function for one item and resolve its future.
 
         Note:
-            - Gets item from queue
-            - Handles shutdown signal (None item)
-            - Processes item using worker function
-            - Stores result in cache
-            - Manages futures for ongoing items
+            - The item is forgotten in every outcome (success, error,
+              cancellation), so requiring it again retries
+            - The result is cached before waiters are released
         """
-        item = await self._worker_queue.get()
-        if item is None:
-            if not self._event.is_set():
-                self._event.set()
-            self._worker_queue.task_done()
-            return
-
         try:
             result = await self.worker(item)
         except Exception as e:
-            self._ongoing[item].set_exception(e)
-            self._event.set()
-        else:
-            future = self._ongoing.pop(item, None)
-            if future and not future.done():
-                future.set_result(result)
+            self._settle(item, exc=e)
+            return
+        except BaseException as e:
+            self._settle(item, exc=e)
+            raise
+        await self._store(item, result)
+
+    async def _store(self, item: T, result: R) -> None:
+        try:
             await self.cache_set(item, result)
-            self._worker_queue.task_done()
+        except Exception as e:
+            self._errors.append(e)
+        finally:
+            self._settle(item, result)
+
+    async def _finish_pending(self) -> list[asyncio.TimeoutError]:
+        """Process everything still queued or waiting (shutdown path).
+
+        Returns:
+            The timeouts hit; each also resolves the affected future.
+        """
+        timeouts: list[asyncio.TimeoutError] = []
+        semaphore = asyncio.Semaphore(self._maxtasks)
+
+        async def _finish(item: T) -> None:
+            async with semaphore:
+                try:
+                    result = await asyncio.wait_for(
+                        self.worker(item), self.finish_timeout
+                    )
+                except TimeoutError as err:
+                    timeouts.append(err)
+                    self._settle(item, exc=err)
+                except Exception as err:
+                    self._settle(item, exc=err)
+                else:
+                    await self._store(item, result)
+
+        while True:
+            # Queued items are all in _ongoing too; they are finished here.
+            while not self._worker_queue.empty():
+                _ = self._worker_queue.get_nowait()
+                self._worker_queue.task_done()
+            pending = [k for k, f in self._ongoing.items() if not f.done()]
+            if not pending:
+                return timeouts
+            _ = await asyncio.gather(*(_finish(key) for key in pending))
 
     @classmethod
     async def aclose_all(cls):
-        """Close all active WorkerQueue instances."""
-        for instance in cls._global_registry.values():
-            await instance.aclose()
+        """Close all active WorkerQueue instances.
+
+        Every instance is closed even if some fail; failures are raised
+        together afterwards.
+        """
+        errors: list[Exception] = []
+        for instance in list(cls._global_registry.values()):
+            try:
+                await instance.aclose()
+            except Exception as e:
+                errors.append(e)
         cls._global_registry.clear()
+        if errors:
+            raise ExceptionGroup("Could not close all WorkerQueues", errors)
 
     async def aclose(self):
         """Gracefully shutdown this worker queue.
 
         Note:
             - Signals shutdown to worker task
-            - Fills queue with None to wake up workers
-            - Waits for task completion
+            - Waits for in-flight items, then finishes the pending ones
             - Removes instance from registry
             - Raises any exception from the worker task
+            - The queue can be used again afterwards
         """
-        if self._worker_task is None:
+        task = self._worker_task
+        if task is None:
+            _ = WorkerQueue._global_registry.pop(self._id, None)
             return
 
         if not self._event.is_set():
             self._event.set()
 
-        # Fill queue to wake up workers
-        while self._worker_queue.qsize() != self._maxtasks:
-            self._worker_queue.put_nowait(None)
-
-        await self._worker_task
-        if (exception := self._worker_task.exception()) is not None:
-            raise exception
-
-        _ = WorkerQueue._global_registry.pop(self._id, None)
-
-    def _finisher(
-        self,
-    ) -> tuple[
-        Callable[[T, asyncio.Future], Coroutine[None, None, None]],
-        list[asyncio.TimeoutError],
-    ]:
-        """Create a finisher function for pending tasks during shutdown.
-
-        Returns:
-            A tuple containing:
-            - The finisher coroutine function
-            - A list to collect timeout errors
-
-        Note:
-            - Uses semaphore to limit concurrent finishing tasks
-            - Tracks timeout errors during shutdown
-        """
-        semaphore = asyncio.Semaphore(self._maxtasks)
-        timeouts: list[asyncio.TimeoutError] = []
-
-        async def _finish(item: T, future: asyncio.Future) -> None:
-            """Finish processing an item during shutdown.
-
-            Args:
-                item: The item to process
-                future: The future to complete
-            """
-            async with semaphore:
-                try:
-                    result = await asyncio.wait_for(
-                        self.worker(item),
-                        self.finish_timeout,
-                    )
-                except TimeoutError as err:
-                    future.set_exception(err)
-                    timeouts.append(err)
-                else:
-                    await self.cache_set(item, result)
-                    future.set_result(result)
-
-        return _finish, timeouts
+        try:
+            await task
+        finally:
+            if self._worker_task is task:
+                WorkerQueue._worker_task.__set__(self, None)
+            _ = WorkerQueue._global_registry.pop(self._id, None)
 
     @property
     def running(self) -> bool:
@@ -286,8 +329,7 @@ class WorkerQueue[T: Hashable, R]:
 
     async def __aenter__(self) -> Self:
         """Enter async context manager, starting worker if not running."""
-        if not self.running:
-            WorkerQueue._worker_task.__set__(self, self._open())
+        self._ensure_running()
         return self
 
     async def __aexit__(self, *_) -> None:

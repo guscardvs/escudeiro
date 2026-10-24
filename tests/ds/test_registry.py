@@ -200,3 +200,24 @@ def test_transform_registry_registers_multiple_transformers():
 
     assert isinstance(a_transformer("test_a"), ExampleA)
     assert isinstance(b_transformer("test_b"), ExampleB)
+
+
+def test_registry_iter_yields_real_keys():
+    reg = Registry(with_enum=Color)
+    reg.register(Color.RED, 1)
+    reg.register(Color.GREEN, 2)
+    keys = list(reg)
+    # real enum members (not str(key)), so they can be passed back to lookup
+    assert all(isinstance(key, Color) for key in keys)
+    assert [reg.lookup(key) for key in keys] == [1, 2]
+
+
+def test_registry_iter_keys_round_trip_for_plain_enum():
+    class Plain(Enum):
+        ONE = 1
+
+    reg = Registry(with_enum=Plain)
+    reg.register(Plain.ONE, "one")
+    (key,) = list(reg)
+    assert key is Plain.ONE
+    assert reg[key] == "one"

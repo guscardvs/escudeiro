@@ -21,6 +21,7 @@ class ThreadPool[T]:
     _pool_size: int
     _available: int
     _available_semaphore: threading.Lock
+    _tickets: threading.Semaphore
 
     def __init__(
         self,
@@ -30,6 +31,10 @@ class ThreadPool[T]:
         pool_size: int = 10,
         pool_recycle: float = 3600,
     ):
+        """
+        :param pool_recycle: Age in seconds after which a resource is
+            released and replaced on acquire. ``0`` (or less) disables recycling.
+        """
         call_init(
             self,
             resources=queue_class(pool_size),
@@ -39,6 +44,7 @@ class ThreadPool[T]:
             pool_size=pool_size,
             available=pool_size,
             available_semaphore=threading.Lock(),
+            tickets=threading.Semaphore(pool_size),
         )
 
     def _initialize_resource(self) -> Resource[T]:
@@ -50,7 +56,7 @@ class ThreadPool[T]:
     ) -> T:
         current = current or time()
         if (
-            self._pool_recycle >= 0
+            self._pool_recycle > 0
             and resource.last_usage + self._pool_recycle <= current
         ):
             self.releaser(resource.get())
@@ -58,64 +64,65 @@ class ThreadPool[T]:
         return resource.get()
 
     def acquire(self) -> T:
-        if self._decrease_available():
+        """Take a resource, blocking until a ticket (pool slot) is free.
+
+        The ticket is returned if anything fails before the resource is handed
+        out, so failures never shrink the pool.
+        """
+        self._take_ticket()
+        try:
             try:
                 resource = self.resources.get_nowait()
             except Empty:
                 resource = self._initialize_resource()
-        else:
-            resource = self.resources.get()
-        return self._maybe_recycle(resource)
+            return self._maybe_recycle(resource)
+        except BaseException:
+            self._return_ticket()
+            raise
 
     def release(self, resource: T) -> None:
-        self.resources.put_nowait(Resource.from_resource(resource))
-        _ = self._increase_available()
+        entry = Resource.from_resource(resource)
+        try:
+            self.resources.put_nowait(entry)
+        finally:
+            self._return_ticket()
 
     def prefill(self, count: int | None = None) -> None:
+        """Create idle resources, up to ``count`` and the free pool slots."""
         count = count or self._pool_size
-        count = min(count, self._pool_size)
+        count = min(count, self._pool_size, self._available)
 
         while self.resources.qsize() < count:
             resource = self._initialize_resource()
             self.resources.put_nowait(resource)
-            _ = self._decrease_available()
 
     def dispose(self) -> None:
+        """Release every idle resource; checked-out ones are not affected.
+
+        Idle resources do not hold tickets, so the pool keeps its capacity.
+        """
         errors = []
-        while not self.resources.empty():
-            resource = self.resources.get()
+        while True:
+            try:
+                resource = self.resources.get_nowait()
+            except Empty:
+                break
             try:
                 self.releaser(resource.get())
             except Exception as e:
                 errors.append(e)
-            _ = self._decrease_available()
         if errors:
             raise ErrorGroup("Could not kill all resources", *errors)
 
-    def _decrease_available(self):
-        """
-        Decrease the count of available resources.
-
-        This method should not be called directly. It is used internally
-        by the `acquire` and `dispose` methods to keep track of the number
-        of available resources.
-        """
+    def _take_ticket(self) -> None:
+        """Block until a slot is free and take it (one ticket per checkout)."""
+        _ = self._tickets.acquire()
         with self._available_semaphore:
-            if self._available == 0:
-                return False
             self._available -= 1
-            return True
 
-    def _increase_available(self):
-        """
-        Increase the count of available resources.
-
-        This method should not be called directly. It is used internally by the
-        `release` and `prefill` methods to keep track of the number
-        of available resources.
-        """
+    def _return_ticket(self) -> None:
         with self._available_semaphore:
             if self._available == self._pool_size:
-                return False
+                return  # spurious return, nothing is checked out
             self._available += 1
-            return True
+        self._tickets.release()
