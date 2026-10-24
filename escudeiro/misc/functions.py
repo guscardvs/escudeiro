@@ -877,6 +877,7 @@ class Caster[U, T]:
         """Casts the value using the provided caster function."""
         return self._caster(value)
 
+    @property
     def __name__(self) -> str:
         return self._name
 

@@ -1,5 +1,4 @@
 from enum import Enum
-from functools import total_ordering
 from typing import Any, NamedTuple, override
 
 
@@ -16,7 +15,6 @@ class EnvTuple(NamedTuple):
     weight: int
 
 
-@total_ordering
 class Env(EnvTuple, Enum):
     """
     An enumeration representing different environment values with associated weights.
@@ -68,6 +66,27 @@ class Env(EnvTuple, Enum):
                 f"{value!r} is not a valid {cls.__name__}"
             ) from None
 
+    # tuple's lexicographic comparisons would otherwise order by name
     @override
-    def __gt__(self, value: Any, /) -> bool:
-        return self.ordering.__gt__(value)
+    def __lt__(self, other: Any, /) -> bool:
+        if not isinstance(other, Env):
+            return NotImplemented
+        return self.ordering < other.ordering
+
+    @override
+    def __le__(self, other: Any, /) -> bool:
+        if not isinstance(other, Env):
+            return NotImplemented
+        return self.ordering <= other.ordering
+
+    @override
+    def __gt__(self, other: Any, /) -> bool:
+        if not isinstance(other, Env):
+            return NotImplemented
+        return self.ordering > other.ordering
+
+    @override
+    def __ge__(self, other: Any, /) -> bool:
+        if not isinstance(other, Env):
+            return NotImplemented
+        return self.ordering >= other.ordering

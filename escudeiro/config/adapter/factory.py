@@ -1,24 +1,28 @@
 import contextlib
 import sys
+import types
 import typing
 from collections.abc import Callable, Mapping, Sequence
 from contextlib import suppress
 from dataclasses import is_dataclass
+from types import NoneType
 from typing import (
     Any,
+    ForwardRef,
     TypeVar,
     cast,
     get_args,
     get_origin,
+    get_type_hints,
 )
 
 from escudeiro.config.core.config import Config
-from escudeiro.config.core.utils import LiteralType, literal_cast
-from escudeiro.config.interface import MISSING, ConfigLike
+from escudeiro.config.core.utils import LiteralType, literal_cast, null_cast
+from escudeiro.config.interface import MISSING, ConfigLike, default_cast
 from escudeiro.data import data, factory
 from escudeiro.data.utils.functions import disassemble_type
 from escudeiro.data.utils.typedef import DisassembledType
-from escudeiro.exc import MissingName
+from escudeiro.exc import InvalidCast, MissingName
 from escudeiro.misc import (
     Caster,
     as_boolean,
@@ -36,22 +40,80 @@ DEFAULT_CONFIG = Config()
 T = TypeVar("T")
 
 
-def _try_each(*names: str, default: Any, cast: Any, config: ConfigLike):
+_sequences = (list, tuple, set, frozenset)
+_bool_cast = Caster(Caster(as_boolean).strict, name="bool")
+
+
+def _defaults_allowed(config: ConfigLike, name: str) -> bool:
+    """Ask the config whether a missing name may fall back to a default.
+
+    EnvConfig drops defaults in some environments (`ignore_default_rule`);
+    a probe default goes through `config.get`, so that decision stays there
+    and the real default is never cast or altered by the config.
+    """
+    probe = object()
+    try:
+        return config.get(name, default_cast, probe) is probe
+    except MissingName:
+        return False
+
+
+def _try_each(
+    *names: str,
+    default: Callable[[], Any],
+    cast: Any,
+    config: ConfigLike,
+):
     for name in names:
         with suppress(MissingName):
             return config(name, cast)
-    if default is not MISSING:
-        return default
+    if _defaults_allowed(config, names[0]):
+        value = default()
+        if value is not MISSING:
+            return value
     raise MissingName(
         exclamation(f"{', '.join(names)} not found and no default was given")
     )
 
 
-def _resolve_cast(outer_type: type) -> tuple[Any, bool]:
-    _sequences = (list, tuple, set)
+def _is_union(annotation: Any) -> bool:
+    return get_origin(annotation) in (typing.Union, types.UnionType)  # pyright: ignore[reportDeprecated]
+
+
+def _first_match(casts: Sequence[Callable[[str], Any]]) -> Callable[[str], Any]:
+    def _cast(val: str) -> Any:
+        for caster in casts:
+            try:
+                return caster(val)
+            except Exception:
+                continue
+        raise InvalidCast("Value does not match any member of the union")
+
+    return _cast
+
+
+def _resolve_union(annotation: Any) -> tuple[Any, bool]:
+    """Union members are tried in order, `None` (null, none, '') last."""
+    args = get_args(annotation)
+    members = [_resolve_cast(arg) for arg in args if arg is not NoneType]
+    if any(is_config for _, is_config in members):
+        if len(members) == 1:
+            return members[0]
+        raise InvalidCast("Unions of configuration classes are not supported")
+    casts = [member for member, _ in members]
+    if NoneType in args:
+        casts.append(null_cast)
+    return (casts[0] if len(casts) == 1 else _first_match(casts)), False
+
+
+def _resolve_cast(outer_type: Any) -> tuple[Any, bool]:
+    while isinstance(outer_type, typing.TypeAliasType):
+        outer_type = outer_type.__value__
     origin = get_origin(outer_type)
+    if _is_union(outer_type):
+        return _resolve_union(outer_type)
     if outer_type is bool:
-        return Caster(as_boolean), False
+        return _bool_cast, False
     if isinstance(outer_type, typing.cast(Any, LiteralType)):
         return literal_cast(outer_type), False
     with contextlib.suppress(ValueError):
@@ -65,11 +127,14 @@ def _resolve_cast(outer_type: type) -> tuple[Any, bool]:
             if outer_type in _sequences
             else outer_type
         ), False
-    if (origin := get_origin(outer_type)) in _sequences:
-        assert origin is not None
+    if origin in _sequences:
         args = get_args(outer_type)
-        cast = args[0] if args else str
-        return make_lex_separator(origin, cast), False
+        element, is_config = _resolve_cast(args[0]) if args else (str, False)
+        if is_config:
+            raise InvalidCast(
+                "Collections of configuration classes are not supported"
+            )
+        return make_lex_separator(origin, cast(Any, element)), False
     return (
         _loads if dict in (origin, outer_type) else origin,  # type:ignore
         False,
@@ -201,6 +266,22 @@ class AdapterConfigFactory:
 
         return load
 
+    def _annotation(
+        self, model_cls: type, resolver: FieldResolverStrategy
+    ) -> Any:
+        annotation = resolver.cast()
+        if not isinstance(annotation, (str, ForwardRef)):
+            return annotation
+        name = resolver.names()[0]
+        try:
+            return get_type_hints(model_cls)[name]
+        except Exception as e:
+            raise InvalidCast(
+                exclamation(
+                    f"Could not resolve the annotation of {model_cls.__qualname__}.{name}"
+                )
+            ) from e
+
     def _get_value(
         self,
         model_cls: type,
@@ -210,18 +291,21 @@ class AdapterConfigFactory:
         defaults: Mapping[str, Any],
     ):
         names = self.resolve_names(model_cls, resolver, prefix)
-        default = next(
-            (result for name in names if (result := defaults.get(name))),
-            resolver.default(),
-        )
-        cast, _is_config = _resolve_cast(resolver.cast())
+        cast, _is_config = _resolve_cast(self._annotation(model_cls, resolver))
         if _is_config:
             return self.load(
                 cast,
                 f"{next(iter(names))}{sep}",
                 sep,
-                defaults=defaults,
+                **defaults,
             )
+
+        def default() -> Any:
+            for name in names:
+                if (value := defaults.get(name, MISSING)) is not MISSING:
+                    return value
+            return resolver.default()
+
         return _try_each(*names, default=default, cast=cast, config=self.config)
 
     def resolve_names(

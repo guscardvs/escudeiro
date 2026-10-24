@@ -8,7 +8,7 @@ from escudeiro.exc import KeyAlreadyRead
 
 @data
 class EnvMapping(MutableMapping[str, str]):
-    mapping: MutableMapping[str, str] = os.environ
+    mapping: MutableMapping[str, str] = field(default=os.environ, repr=False)
     already_read: set[str] = field(default_factory=set)
 
     @override

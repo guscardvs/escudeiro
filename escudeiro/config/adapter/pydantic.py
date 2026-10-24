@@ -4,6 +4,7 @@ from typing import Any, cast, override
 
 from pydantic import BaseModel
 from pydantic.fields import FieldInfo
+from pydantic_core import PydanticUndefined
 
 from escudeiro.config.adapter.interface import FieldResolverStrategy
 from escudeiro.config.interface import MISSING
@@ -42,13 +43,12 @@ class PydanticResolverStrategy(FieldResolverStrategy[FieldWrapper]):
 
     @override
     def default(self) -> Any | type[MISSING]:
-        if self.field_info.default not in (None, Ellipsis):
-            return self.field_info.default
-        return (
-            MISSING
-            if self.field_info.default_factory is None
-            else self.field_info.default_factory
-        )
+        default = self.field_info.default
+        if default is not PydanticUndefined and default is not Ellipsis:
+            return default
+        if self.field_info.default_factory is not None:
+            return self.field_info.default_factory()  # pyright: ignore[reportCallIssue]
+        return MISSING
 
     @override
     @classmethod
@@ -72,8 +72,14 @@ class PydanticResolverStrategy(FieldResolverStrategy[FieldWrapper]):
     ) -> Generator[FieldWrapper, Any, Any]:
         for field in config_class.__fields__.values():
             field_info = FieldInfo(
-                annotation=field.outer_type_,
-                default=field.default,
+                # outer_type_ drops Optional, the annotation keeps it
+                annotation=field.annotation,
+                # v1 keeps `None` as the default of required/factory fields
+                default=(
+                    PydanticUndefined
+                    if field.required or field.default_factory
+                    else field.default
+                ),
                 default_factory=field.default_factory,
                 alias=field.alias,
             )

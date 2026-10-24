@@ -26,16 +26,15 @@ class DataclassResolverStrategy(FieldResolverStrategy[Field]):
 
     @override
     def default(self) -> Any | type[MISSING]:
-        if self.field.default not in (None, Ellipsis, dc_MISSING):
-            return self.field.default
-        return (
-            MISSING
-            if self.field.default_factory in (None, dc_MISSING)
-            else self.field.default_factory
-        )
+        default = self.field.default
+        if default is not dc_MISSING and default is not Ellipsis:
+            return default
+        if self.field.default_factory is not dc_MISSING:
+            return self.field.default_factory()
+        return MISSING
 
     @override
     @classmethod
     def iterfield(cls, config_class: type) -> Generator[Field, Any, Any]:
         _ = cls
-        yield from fields(config_class)
+        yield from (item for item in fields(config_class) if item.init)

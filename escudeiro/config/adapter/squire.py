@@ -35,4 +35,6 @@ class SquireResolverStrategy(FieldResolverStrategy[Field]):
     @classmethod
     def iterfield(cls, config_class: type) -> Generator[Field, Any, Any]:
         _ = cls
-        yield from get_fields(config_class).values()
+        yield from (
+            item for item in get_fields(config_class).values() if item.init
+        )

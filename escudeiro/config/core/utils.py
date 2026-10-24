@@ -101,7 +101,8 @@ def literal_cast(literal_decl: Any):
 def none_is_missing[T, U](
     cast: Callable[[T], U | None],
 ) -> Callable[[T | None], U]:
-    exc_message = f"Expected value to be castable to {cast.__name__}, but returned None instead"
+    cast_name = getattr(cast, "__name__", type(cast).__name__)
+    exc_message = f"Expected value to be castable to {cast_name}, but returned None instead"
 
     def _cast(val: T | None) -> U:
         if val is None:
