@@ -401,6 +401,12 @@ class Retry:
     async def agenmap(self, predicate, collection, strategy="threshold")
 ```
 
+`map`, `amap` and `agenmap` retry each item up to `count` times. An item that
+still fails is logged and skipped, and counts against a failure budget of
+`count` items: with `strategy="threshold"` the next failure after `count`
+skipped items raises an `ErrorGroup`; with `"temperature"` every success
+forgives one earlier failure. This is the same for any `signal`.
+
 ---
 
 ### `FrozenCoroutine`

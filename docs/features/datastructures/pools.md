@@ -80,7 +80,7 @@ await pool.prefill()  # Pre-create all resources up to pool_size
 
 ### Recycling Resources
 
-You can set a `pool_recycle` timeout (in seconds) to automatically recycle resources after a certain period.
+You can set a `pool_recycle` timeout (in seconds) to automatically recycle resources after a certain period. A value of `0` (or less) disables recycling in both `AsyncPool` and `ThreadPool`.
 
 ```python
 pool = AsyncPool(factory, releaser, pool_size=5, pool_recycle=3600)
@@ -110,7 +110,7 @@ class AsyncPool[T]:
   - `releaser`: Async function to clean up a resource.
   - `queue_class`: Queue type for managing resources (default: LIFO).
   - `pool_size`: Maximum number of resources.
-  - `pool_recycle`: Time in seconds before a resource is recycled.
+  - `pool_recycle`: Time in seconds before a resource is recycled (`<= 0` disables recycling).
 
 #### Methods
 

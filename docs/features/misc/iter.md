@@ -195,14 +195,14 @@ async def aall[T](iterable: AsyncIterable[T], predicate=bool) -> bool
 ```python
 def flatten(sequence: Sequence[Any]) -> Sequence[Any]:
 ```
-- Flattens nested sequences.
+- Flattens nested sequences. `str`, `bytes` and `bytearray` are treated as single values.
 
 #### `exclude_none`
 
 ```python
 def exclude_none[SequenceT: SequenceTypes](sequence: SequenceT) -> SequenceT:
 ```
-- Recursively removes `None` from sequences.
+- Recursively removes `None` from sequences, sets and mappings. Container types are preserved at every depth (tuples stay tuples).
 
 #### `next_or`, `anext_or`
 

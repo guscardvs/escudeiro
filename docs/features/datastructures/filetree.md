@@ -132,7 +132,9 @@ class VirtualFileTree:
 
 - Use `VirtualFileTree` for in-memory operations and composition.
 - Use `FileTree` to write to disk, with context manager support for atomicity.
-- Merging trees will raise on conflicts (e.g., file/folder name clashes).
+- Merging trees will raise on conflicts (e.g., file/folder name clashes); a failed merge changes nothing.
+- `FileTree.write()` validates first and never deletes or replaces an existing file or directory to make room: a file where a folder is expected (or the reverse) raises `InvalidPath`. Files are written through a temporary file and renamed into place.
+- Node names must be plain names: empty, `.`, `..`, and names containing `/`, `\` or NUL are rejected.
 - All file and directory creation methods accept arbitrary subpaths.
 
 ---

@@ -200,6 +200,11 @@ class DotFile:
 - The API is compatible with Starlette's `Config`, so you can migrate with minimal changes.
 - Use `EnvConfig` and `DotFile` for advanced, multi-environment setups.
 - Adapters make it easy to bind configuration to structured types.
+- `bool` fields loaded through an adapter are strict: values that are not a recognised boolean (`true`, `1`, `yes`, `false`, `0`, `no`) raise `InvalidCast` instead of becoming `None`. `Optional[...]`/`X | None` fields accept null-like values (`null`, `none`, empty).
+- Environments are ordered by weight (`LOCAL < TEST < DEV < QA < PRD`; `ALWAYS` applies to every environment). With `cascade=True` a `DotFile` also applies to higher environments; an exact match wins over a cascading one.
+- `CONFIG_ENV` falls back to `default_env` only when it is absent or empty; an invalid value raises `InvalidCast` naming `CONFIG_ENV`.
+- `repr()` of `Config`, `EnvConfig` and the factories does not include the environment mapping, and cast errors do not include the offending value.
+- Dotenv files are read as UTF-8 (a BOM is accepted), `export KEY=value` is understood, and a malformed line raises `InvalidDotenv` naming the file and line. `Config(..., strict=True)` also raises when `env_file` does not exist.
 
 ---
 
