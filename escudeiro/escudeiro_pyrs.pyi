@@ -16,10 +16,13 @@ class url:
             """Initialize with a query string (e.g., 'key1=val1&key2=val2')."""
 
         def add(self, key: str, value: str) -> None:
-            """Add a new key-value pair to the query."""
+            """Append a value to a key (new keys go last, insertion order is kept)."""
 
-        def get(self) -> Mapping[str, Collection[str]]:
-            """Return all parameters as a mapping of keys to value collections."""
+        def set(self, key: str, value: str) -> None:
+            """Replace all values of a key (a new key goes last)."""
+
+        def get(self) -> dict[str, list[str]]:
+            """Return all parameters, in insertion order, as a dict of keys to value lists."""
 
         def encode(self) -> str:
             """Return the URL-encoded query string."""
@@ -40,26 +43,29 @@ class url:
             """Return encoded string omitting equals signs for empty values."""
 
         def sort(self) -> None:
-            """Sort parameters alphabetically by key."""
+            """Sort parameters by key (values of a key keep their order)."""
 
-        def first(self) -> Mapping[str, str]:
-            """Return first value for each parameter as a mapping."""
+        def first(self) -> dict[str, str]:
+            """Return first value for each parameter, in insertion order."""
 
         def compare(self, other: Self) -> bool:
-            """Compare if two Query instances have identical parameters."""
+            """Compare parameters; the order of keys is ignored."""
 
         @property
-        def params(self) -> Mapping[str, Collection[str]]:
-            """Access the underlying parameters mapping directly."""
+        def params(self) -> dict[str, list[str]]:
+            """The parameters, in insertion order (a new dict on every access)."""
 
     class Path:
         """Represents and manipulates URL path components."""
 
         def __init__(self, pathstr: str) -> None:
-            """Initialize with a path string (e.g., '/path/to/resource')."""
+            """Initialize with a path string (e.g., '/path/to/resource').
+
+            Relative paths stay relative; segments are percent-encoded once.
+            """
 
         def add(self, pathstr: str) -> None:
-            """Append a path segment or segments to the current path."""
+            """Append segments (dot segments are kept literally, see `normalize`)."""
 
         def add_path(self, pathobj: Path) -> None:
             """Append a pathlib.Path object's segments to the current path."""
@@ -116,13 +122,17 @@ class url:
         port: int | None
 
         def __init__(self, netloc: str) -> None:
-            """Parse a network location string (e.g., 'user:pass@host:port')."""
+            """Parse a network location string (e.g., 'user:pass@host:port').
+
+            Raises:
+                ValueError: invalid host or port.
+            """
 
         def encode(self) -> str:
             """Return the properly encoded network location string."""
 
         def parse(self, netloc: str) -> None:
-            """Parse and replace the current network location values."""
+            """Parse and replace the current values (unchanged on ValueError)."""
 
         def set(
             self,
@@ -131,7 +141,7 @@ class url:
             username: str | None = None,
             password: str | None = None,
         ) -> None:
-            """Set individual network location components."""
+            """Set individual components. Raises ValueError for an invalid host."""
 
         def merge(self, other: Self) -> Self:
             """Return a new Netloc with values merged from another instance."""
@@ -149,7 +159,7 @@ class url:
             username: str | None = None,
             password: str | None = None,
         ) -> url.Netloc:
-            """Create a Netloc instance from individual components."""
+            """Create a Netloc from components. Raises ValueError for an invalid host."""
 
         def copy(self) -> Self:
             """Create a deep copy of this Netloc instance."""
@@ -161,13 +171,19 @@ class url:
         """Comprehensive URL parsing and manipulation class."""
 
         scheme: str
+        # The parts are live: editing the returned object edits this URL.
+        # Assigning a part stores a copy of it.
         netloc: url.Netloc
         path: url.Path
         query: url.Query
         fragment: url.Fragment
 
         def __init__(self, url: str) -> None:
-            """Parse a complete URL string into its components."""
+            """Parse an absolute URL, a relative reference or an opaque URI.
+
+            `encode()` round-trips the input. Raises ValueError for invalid
+            input (bad host or port).
+            """
 
         def encode(self, append_empty_equal: bool = True) -> str:
             """Return the properly encoded URL string."""

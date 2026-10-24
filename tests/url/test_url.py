@@ -75,15 +75,13 @@ def test_url():
     )
     assert url.encode() == url.copy().encode()
 
-    # Test copying the url returns a new instance
-    url = URL("http://www.example.com")
+    # Test copying returns a new, independent instance
+    url = URL("https://www.example.com/path?key1=value1")
     new_url = url.copy()
     assert new_url is not url
-
-    # Test copying the url does not override any values on the old url
-    url = URL("https://www.example.com/path?key1=value1").add(
-        query={"key2": "value2", "key3": "value3"}
-    )
-    new_url = url.copy()
-    assert url.path is not new_url.path
-    assert url.query is not new_url.query
+    assert new_url == url
+    _ = new_url.query.add(key2="value2")
+    _ = new_url.path.add("sub")
+    assert url == "https://www.example.com/path?key1=value1"
+    assert new_url == "https://www.example.com/path/sub?key1=value1&key2=value2"
+    assert url != new_url
