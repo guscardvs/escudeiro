@@ -48,8 +48,13 @@ class BoundContext[T](Context[T]):
         """
         with self._lock:
             client = self.context.acquire()
+            try:
+                if self.stack == 0:
+                    self.adapter.begin(client)
+            except BaseException:
+                self.context.release()
+                raise
             self.stack += 1
-            self.adapter.begin(client)
         return client
 
     @override
@@ -61,14 +66,17 @@ class BoundContext[T](Context[T]):
             commit (bool, optional): Whether to commit the transaction. Defaults to True.
         """
         with self._lock:
-            if self.stack == 1:
-                if self.adapter.in_atomic(self.context.client):
-                    if commit:
-                        self.adapter.commit(self.context.client)
-                    else:
-                        self.adapter.rollback(self.context.client)
+            try:
+                if self.stack == 1:
+                    client = self.context.client
+                    if self.adapter.in_atomic(client):
+                        if commit:
+                            self.adapter.commit(client)
+                        else:
+                            self.adapter.rollback(client)
+            finally:
+                self.stack -= 1
                 self.context.release()
-            self.stack -= 1
 
     @override
     def __exit__(
@@ -125,8 +133,12 @@ class AsyncBoundContext[T](AsyncContext[T]):
         """
         async with self.lock:
             client = await self.context.acquire()
-            if self.stack == 0:
-                await self.adapter.begin(client)
+            try:
+                if self.stack == 0:
+                    await self.adapter.begin(client)
+            except BaseException:
+                await self.context.release()
+                raise
             self.stack += 1
             return client
 
@@ -139,14 +151,17 @@ class AsyncBoundContext[T](AsyncContext[T]):
             commit (bool, optional): Whether to commit the transaction. Defaults to True.
         """
         async with self.lock:
-            client = await self.context.client()
-            if self.stack == 1:
-                if commit:
-                    await self.adapter.commit(client)
-                else:
-                    await self.adapter.rollback(client)
-            self.stack -= 1
-        await self.context.release()
+            try:
+                if self.stack == 1:
+                    client = await self.context.client()
+                    if await self.adapter.in_atomic(client):
+                        if commit:
+                            await self.adapter.commit(client)
+                        else:
+                            await self.adapter.rollback(client)
+            finally:
+                self.stack -= 1
+                await self.context.release()
 
     @override
     async def __aexit__(

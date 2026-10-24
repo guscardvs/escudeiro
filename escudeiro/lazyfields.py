@@ -1,4 +1,5 @@
 import contextlib
+import threading
 import warnings
 from collections.abc import Callable, Coroutine
 from dataclasses import dataclass
@@ -261,8 +262,8 @@ class AsyncLazyField[SelfT, T](lazy):
         object.__setattr__(instance, self.private_name, container)
         return container
 
-    async def reset(self, instance: SelfT, withval: T | None = None):
-        to_reset = withval if withval is not None else _UNSET
+    async def reset(self, instance: SelfT, withval: T | type[_UNSET] = _UNSET):
+        to_reset = withval
         if not self._instance_marked(instance):
             if to_reset is _UNSET:
                 return
@@ -283,6 +284,11 @@ class AsyncLazyField[SelfT, T](lazy):
             await container.delete()
 
 
+_SYNC_FACTORY = "_lazyfield_sync_factory_"
+_ASYNC_FACTORY = "_lazyfield_async_factory_"
+_install_lock = threading.Lock()
+
+
 def mark_class(
     ctx_factory: Callable[[], contextlib.AbstractContextManager] | None = None,
     actx_factory: Callable[[], contextlib.AbstractAsyncContextManager]
@@ -301,14 +307,18 @@ def mark_class(
         @wraps(original_init)
         def _init_(self: T, *args: Any, **kwargs: Any):
             original_init(self, *args, **kwargs)
-            # Store both factories if provided
+            # install-if-absent: a repeated __init__ must not swap the lock
             if ctx_factory is not None:
-                object.__setattr__(self, "_lazyfield_sync_ctx_", ctx_factory())
+                _ = _install_ctx(self, is_async=False)
             if actx_factory is not None:
-                object.__setattr__(
-                    self, "_lazyfield_async_ctx_", actx_factory()
-                )
+                _ = _install_ctx(self, is_async=True)
 
+        # Subclasses that regenerate `__init__` skip the wrapper, so the
+        # locks are also created on first use (see `check_marking`).
+        if ctx_factory is not None:
+            type.__setattr__(cls, _SYNC_FACTORY, staticmethod(ctx_factory))
+        if actx_factory is not None:
+            type.__setattr__(cls, _ASYNC_FACTORY, staticmethod(actx_factory))
         type.__setattr__(cls, "__init__", _init_)
         type.__setattr__(cls, "_lazyfield_marked_", True)
         return cls
@@ -320,12 +330,23 @@ def is_marked(val: Any) -> bool:
     return getattr(val, "_lazyfield_marked_", False)
 
 
-def check_marking(instance: Any, is_async: bool):
-    if not is_marked(instance):
-        return False
-
+def _install_ctx(instance: Any, is_async: bool) -> bool:
     ctx_attr = "_lazyfield_async_ctx_" if is_async else "_lazyfield_sync_ctx_"
-    return hasattr(instance, ctx_attr)
+    if hasattr(instance, ctx_attr):
+        return True
+    factory = getattr(
+        type(instance), _ASYNC_FACTORY if is_async else _SYNC_FACTORY, None
+    )
+    if factory is None:
+        return False
+    with _install_lock:  # one lock per instance even on racing first access
+        if not hasattr(instance, ctx_attr):
+            object.__setattr__(instance, ctx_attr, factory())
+    return True
+
+
+def check_marking(instance: Any, is_async: bool):
+    return is_marked(instance) and _install_ctx(instance, is_async)
 
 
 def get_ctx(instance: Any, is_async: bool):
@@ -432,7 +453,11 @@ def _get_container(
 
 def is_initialized(instance: Any, attr: str) -> bool:
     lazyf = getlazyfield(instance, attr)
-    return hasattr(instance, lazyf.private_name)
+    try:
+        container = object.__getattribute__(instance, lazyf.private_name)
+    except AttributeError:
+        return False
+    return container.content is not _UNSET
 
 
 _mock_coroutine = make_noop(asyncio=True, returns=None)
