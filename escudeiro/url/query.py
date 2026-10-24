@@ -23,10 +23,8 @@ class Query(Wrapped[url.Query]):
     def set(
         self, args: Mapping[str, str] | None = None, /, **params: str
     ) -> Self:
-        if args:
-            self.internal.set_map(args)
-        if params:
-            self.internal.set_map(params)
+        if args is not None or params:
+            self.internal.set_map({**(args or {}), **params})
         return self
 
     def copy(self) -> Self:
@@ -52,10 +50,10 @@ class Query(Wrapped[url.Query]):
         return self.internal.params
 
     def __setitem__(self, key: str, value: str) -> None:
-        _ = self.add({key: value})
+        self.internal.set(key, value)
 
     def __getitem__(self, key: str) -> Collection[str]:
-        return self.params[key]
+        return self.params.get(key, [])
 
     def remove(self, *keys: str) -> Self:
         for key in keys:
