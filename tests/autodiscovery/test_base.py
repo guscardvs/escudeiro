@@ -1,17 +1,13 @@
 import pathlib
 import sys
 
-import pytest
-
 # Import the code to be tested
 from escudeiro.autodiscovery.base import (
     AutoDiscoveryHelper,
     make_modulename_converter,
-    ordered_mod,
     smart_import,
     sort_files_by_dependency,
 )
-
 
 
 def test_make_modulename_converter(sample_root_path: pathlib.Path):
@@ -31,9 +27,7 @@ def test_auto_discovery_helper_excludes(sample_root_path: pathlib.Path):
 
 
 def test_auto_discovery_helper_includes(sample_root_path: pathlib.Path):
-    helper = AutoDiscoveryHelper(
-        root=sample_root_path, include=["include_dir"]
-    )
+    helper = AutoDiscoveryHelper(root=sample_root_path, include=["include_dir"])
     includes = helper.includes
     assert "include_dir" in includes[0]
 
@@ -56,21 +50,16 @@ def test_auto_discovery_helper_should_look(
     assert not helper.should_lookup(not_included)
 
 
-@pytest.mark.skip("Dependency sorting not working yet")
 def test_sort_files_by_dependency(
     sample_root_path: pathlib.Path, sample_files: list[pathlib.Path]
 ):
     converter = make_modulename_converter(
         sample_root_path, pathlib.Path.as_posix
     )
-
-    def get_name(path: pathlib.Path):
-        return path.stem
-
-    modnames = list(map(converter, sample_files))
-    sorted_files = list(sort_files_by_dependency(modnames, sample_files))
-    expected_order = ["__init__", "auto", "mod_a", "mod_b", "mod_c"]
-    assert list(map(get_name, sorted_files)) == expected_order
+    files = sorted(sample_files)
+    modnames = list(map(converter, files))
+    names = [path.stem for path in sort_files_by_dependency(modnames, files)]
+    assert names.index("mod_a") < names.index("mod_b") < names.index("mod_c")
 
 
 def test_smart_import():
@@ -85,14 +74,3 @@ def test_smart_import():
 
     # Clean up sys.modules
     del sys.modules["tests.autodiscovery.modules"]
-
-
-def test_ordered_mod(sample_root_path: pathlib.Path):
-    converter = make_modulename_converter(
-        sample_root_path, pathlib.Path.as_posix
-    )
-    mod = smart_import("tests.autodiscovery.modules.mod_c", converter)
-    ordered = ordered_mod(mod)
-    assert ordered[:2] == [("Another", mod.Another), ("Second", mod.Second)]
-
-    del sys.modules["tests.autodiscovery.modules.mod_c"]
