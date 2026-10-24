@@ -19,7 +19,7 @@ from collections.abc import (
     Mapping,
     Sequence,
 )
-from typing import TYPE_CHECKING, Any, cast, overload
+from typing import Any, cast, overload
 
 from escudeiro.misc.functions import as_async, safe_cast
 
@@ -114,16 +114,19 @@ async def aislice[T](
         except StopAsyncIteration:
             return
 
-    # Yield remaining elements
+    # Yield remaining elements; the step skip happens lazily right before the
+    # next yield so no item past the last yielded one is consumed.
+    first = True
     while stop is None or start < stop:
         try:
+            if not first:
+                for _ in range(step - 1):
+                    _ = await anext(it)
+            first = False
             yield await anext(it)
-            start += step
-            # Skip step-1 elements
-            for _ in range(step - 1):
-                _ = await anext(it)
         except StopAsyncIteration:
             break
+        start += step
 
 
 async def amoving_window[T](
@@ -238,13 +241,18 @@ async def aenumerate[T](
         index += 1
 
 
+_MISSING: Any = object()
+
+
 async def aany[T](
     iterable: AsyncIterable[T],
     predicate: Callable[[T], bool]
     | Callable[[T], Coroutine[Any, Any, bool]] = bool,
 ) -> bool:
     """Return True if any item in the async iterable satisfies the predicate."""
-    return (await anext_or(afilter(predicate, iterable))) is not None
+    return (
+        await anext_or(afilter(predicate, iterable), _MISSING)
+    ) is not _MISSING
 
 
 async def aall[T](
@@ -289,12 +297,15 @@ async def acarrystarmap[*Ts, U](
         yield await predicate(*args), args
 
 
+_ATOMIC_SEQUENCES = (str, bytes, bytearray, memoryview)
+
+
 def flatten(sequence: Sequence[Any]) -> Sequence[Any]:
     """Flattens nested sequences into a single-level sequence.
 
     Recursively flattens nested sequences (lists, tuples, etc.) while
     preserving the outer sequence type. Strings and bytes objects are
-    treated as atomic units and not flattened.
+    treated as atomic units (as are bytearray and memoryview) and not flattened.
 
     Args:
         sequence: The nested sequence to flatten.
@@ -320,7 +331,9 @@ def flatten(sequence: Sequence[Any]) -> Sequence[Any]:
         while index < len(curseq):
             item = curseq[index]
             index += 1
-            if isinstance(item, Sequence) and not isinstance(item, str | bytes):
+            if isinstance(item, Sequence) and not isinstance(
+                item, _ATOMIC_SEQUENCES
+            ):
                 stack.append((curseq, index))
                 curseq, index = item, 0
             else:
@@ -343,7 +356,7 @@ def exclude_none[SequenceT: SequenceTypes](sequence: SequenceT) -> SequenceT:
         sequence type.
 
     Notes:
-        - Tuple typing will not be preserved due to Python's immutability of tuples.
+        - Tuples (and sets) are rebuilt as tuples (sets) once filtered, at any depth.
         - For dictionaries, only values are checked for None; keys are always preserved.
 
     Examples:
@@ -357,47 +370,49 @@ def exclude_none[SequenceT: SequenceTypes](sequence: SequenceT) -> SequenceT:
         # Output: {"a": 1, "c": {"e": 2}}
         ```
     """
-    outer_acc: SequenceT = (
-        type(sequence)() if not isinstance(sequence, tuple) else []
-    )
-    stack: list[tuple[SequenceT, SequenceT]] = [(sequence, outer_acc)]
+
+    def _new(value: Any) -> Any:
+        # Tuples and sets are built as lists and converted once complete, so
+        # unfinished children never end up inside a hashing container.
+        return type(value)() if isinstance(value, list | dict) else []
+
+    def _put(acc: Any, key: Any, child: Any) -> Any:
+        if isinstance(acc, dict):
+            acc[key] = child
+            return key
+        acc.append(child)
+        return len(acc) - 1
+
+    root = _new(sequence)
+    stack: list[tuple[Any, Any]] = [(sequence, root)]
+    # (built list, original type, parent, slot in parent); parents come first
+    pending: list[tuple[Any, type, Any, Any]] = []
 
     while stack:
         curr, acc = stack.pop()
-
-        if isinstance(curr, dict):
-            if TYPE_CHECKING:
-                acc = cast(dict, acc)
-            for key, value in curr.items():
-                if value is None:
-                    continue
-                if isinstance(value, SequenceTypes):
-                    new_acc = (
-                        type(value)() if not isinstance(value, tuple) else []
-                    )
-                    acc[key] = new_acc
-                    stack.append((value, new_acc))  # pyright: ignore[reportArgumentType]
-                else:
-                    acc[key] = value
-        else:
-            temp_acc = []
-            for item in curr:
-                if item is None:
-                    continue
-                if isinstance(item, SequenceTypes):
-                    new_acc = (
-                        type(item)() if not isinstance(item, tuple) else []
-                    )
-                    temp_acc.append(new_acc)
-                    stack.append((item, new_acc))  # pyright: ignore[reportArgumentType]
-                else:
-                    temp_acc.append(item)
-            if isinstance(curr, list | tuple):
-                _ = acc.extend(temp_acc)  # pyright: ignore[reportAttributeAccessIssue]
+        pairs = curr.items() if isinstance(curr, dict) else enumerate(curr)
+        for key, value in pairs:
+            if value is None:
+                continue
+            if isinstance(value, SequenceTypes):
+                child = _new(value)
+                slot = _put(acc, key, child)
+                stack.append((value, child))
+                if isinstance(value, tuple | set):
+                    pending.append((child, type(value), acc, slot))
             else:
-                _ = acc.update(temp_acc)  # pyright: ignore[reportAttributeAccessIssue]
+                _put(acc, key, value)
 
-    return outer_acc
+    for child, kind, parent, slot in reversed(pending):
+        parent[slot] = tuple(child) if issubclass(kind, tuple) else kind(child)
+    if isinstance(sequence, tuple | set):
+        return cast(
+            SequenceT,
+            tuple(root)
+            if isinstance(sequence, tuple)
+            else type(sequence)(root),
+        )
+    return root
 
 
 def next_or[T, D](iterable: Iterable[T], default: D = None) -> T | D:

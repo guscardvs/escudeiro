@@ -93,6 +93,18 @@ class NullMonad(BaseMonad[None]):
         """Raises an exception when trying to get the value of a NullMonad."""
         raise ValueError("NullMonad has no value")
 
+    @override
+    @classmethod
+    def pure(cls, value: Any) -> NullMonad:
+        """A NullMonad holds no value, so `pure` always returns it."""
+        del value
+        return cls()
+
+    def maybe(self, func: Callable[[Any], Any]) -> NullMonad:
+        """Returns a NullMonad since there is no value to apply `func` to."""
+        del func
+        return self
+
     def bind(self, func: Callable[[Any], BaseMonad[Any]]) -> NullMonad:
         """
         Returns a NullMonad since it cannot bind to a function.
@@ -188,6 +200,9 @@ class Right[L, R](Either[L, R]):
 Nothing = NullMonad()
 
 
+_UNRESOLVED: Any = object()
+
+
 class AsyncCell[T]:
     """A simple asynchronous cell that can hold a value and be awaited."""
 
@@ -198,10 +213,13 @@ class AsyncCell[T]:
     ):
         self._value = awaitable
         self._runner = runner
+        self._result: Any = _UNRESOLVED
 
     def resolve(self) -> T:
-        """Runs the awaitable and returns its value."""
-        return self._runner(self._value)
+        """Runs the awaitable once and returns its (cached) value."""
+        if self._result is _UNRESOLVED:
+            self._result = self._runner(self._value)
+        return self._result
 
 
 class AsyncMonadHelper:
@@ -313,7 +331,10 @@ class LazyMonad[T, U](BaseMonad[T]):
             return Monad.pure(self.value)
         if self._parent:
             if parent_value is None:
-                parent_value = self._parent.resolve().get_value()
+                parent = self._parent.resolve()
+                if isinstance(parent, NullMonad | Left):
+                    return cast(Monad[U], parent)  # short-circuit
+                parent_value = parent.get_value()
             return self._binder(parent_value)
         return self._binder(self.value)
 

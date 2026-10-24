@@ -40,9 +40,19 @@ def is_extension(value: StrOrPath, *exts: str) -> bool:
     Returns:
         bool: True if the file extension matches any of the provided extensions, False otherwise.
     """
-    return any(
-        get_extension(value).lower() == ext.lower().rstrip(".") for ext in exts
-    )
+    name = autopath(value).name.lower()
+    last = get_extension(value).lower()
+    for ext in exts:
+        ext = ext.lower().lstrip(".")
+        # compound extensions ("tar.gz") match the tail of the name; a
+        # dotfile like ".txt" has no extension
+        if (
+            last == ext
+            if "." not in ext
+            else name.endswith(f".{ext}") and len(name) > len(ext) + 1
+        ):
+            return True
+    return False
 
 
 def is_valid_path(value: StrOrPath) -> bool:

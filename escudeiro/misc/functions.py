@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import functools
 import inspect
+import logging
 import re
 import typing
 from collections.abc import (
@@ -43,6 +44,8 @@ from typing import (
 from escudeiro.exc.errors import ErrorGroup, InvalidCast, RetryError
 from escudeiro.misc.contextx import AsyncContextWrapper, is_async_context
 from escudeiro.misc.strings import sentence, squote
+
+logger = logging.getLogger(__name__)
 
 
 def safe_cast[V, T, D](
@@ -501,7 +504,7 @@ def as_datetime(value: date, tz: tzinfo | None = None) -> datetime:
 def join_into_datetime(
     dt: date, tm: time, tz: tzinfo | None = None
 ) -> datetime:
-    return as_datetime(dt, tz).replace(
+    return as_datetime(dt, tz if tz is not None else tm.tzinfo).replace(
         hour=tm.hour,
         minute=tm.minute,
         second=tm.second,
@@ -658,6 +661,28 @@ class Retry:
 
         return retrier
 
+    def _skip_failed_item(self, count: int, item: Any, err: ErrorGroup) -> int:
+        """Spends one unit of the failure budget on an exhausted item.
+
+        Only the exhaustion error raised by this class is handled (whatever
+        `signal` is); any other `ErrorGroup` is re-raised untouched.
+        """
+        if err.subgroup(RetryError) is None:
+            raise err
+        if count >= self.count:
+            raise ErrorGroup(
+                "Failed retry operation",
+                (RetryError(f"Exceeded max retries: {self.count}"), err),
+            ) from err
+        logger.warning(
+            "Retry skipped item %r after exhausting %d attempts (%d/%d failed items)",
+            item,
+            self.count,
+            count + 1,
+            self.count,
+        )
+        return count + 1
+
     def map[S, T](
         self,
         predicate: Callable[[S], T],
@@ -666,14 +691,15 @@ class Retry:
     ) -> Iterable[T]:
         """
         Applies the retry logic to each item in a collection.
-        This method attempts to apply the given predicate function to each item in the collection. If an exception
-        occurs during the execution of the predicate, it will retry the operation up to the `count` number of times,
-        with a delay between retries. You can control the retry strategy with the `strategy` parameter.
+        Each item is attempted up to `count` times (see `__call__`). An item that still fails after that is
+        logged and skipped (it is absent from the output) and counts against a failure budget of `count` items;
+        once one more item fails the iteration stops with an `ErrorGroup`. This holds for any `signal`.
         Args:
             predicate: The function to apply to each item in the collection.
             collection: The collection of items to iterate over and apply the predicate to.
-            strategy: The retry strategy to use. "threshold" retries a fixed number of times, while "temperature"
-                      decreases the retry count with each successful operation. Default is "threshold".
+            strategy: How the failure budget is spent. "threshold" gives up after `count` skipped items in
+                      total, while "temperature" forgives one skipped item for each successful item (so
+                      failures only abort when successes do not offset them). Default is "threshold".
         Returns:
             An iterable of the results of the predicate applied to each item in the collection.
         Example:
@@ -683,20 +709,11 @@ class Retry:
         """
         count = 0
         predicate = self(predicate)
-        signal = self.get_signal()
         for item in collection:
             try:
                 yield predicate(item)
-            except signal as err:
-                if count >= self.count:
-                    raise ErrorGroup(
-                        "Failed retry operation",
-                        (
-                            RetryError(f"Exceeded max retries: {self.count}"),
-                            err,
-                        ),
-                    ) from err
-                count += 1
+            except ErrorGroup as err:
+                count = self._skip_failed_item(count, item, err)
             else:
                 if strategy == "temperature":
                     count = max(0, count - 1)
@@ -709,15 +726,15 @@ class Retry:
     ) -> AsyncIterable[T]:
         """
         Asynchronous version of `map` for a collection of items, using coroutines for the predicate.
-        This method attempts to apply the given asynchronous predicate function to each item in the collection.
-        If an exception occurs during the execution of the predicate, it will retry the operation up to the `count`
-        number of times, with a delay between retries. The retry strategy can be controlled using the `strategy`
-        parameter.
+        Each item is attempted up to `count` times (see `acall`). An item that still fails after that is
+        logged and skipped (it is absent from the output) and counts against a failure budget of `count` items;
+        once one more item fails the iteration stops with an `ErrorGroup`. This holds for any `signal`.
         Args:
             predicate: The asynchronous function to apply to each item in the collection.
             collection: The collection of items to iterate over and apply the predicate to.
-            strategy: The retry strategy to use. "threshold" retries a fixed number of times, while "temperature"
-                      decreases the retry count with each successful operation. Default is "threshold".
+            strategy: How the failure budget is spent. "threshold" gives up after `count` skipped items in
+                      total, while "temperature" forgives one skipped item for each successful item.
+                      Default is "threshold".
         Returns:
             An asynchronous iterable of the results of the predicate applied to each item in the collection.
         Example:
@@ -727,21 +744,12 @@ class Retry:
             ```
         """
         count = 0
-        signal = self.get_signal()
         predicate = self.acall(predicate)
         for item in collection:
             try:
                 yield await predicate(item)
-            except signal as err:
-                if count >= self.count:
-                    raise ErrorGroup(
-                        "Failed retry operation",
-                        (
-                            RetryError(f"Exceeded max retries: {self.count}"),
-                            err,
-                        ),
-                    ) from err
-                count += 1
+            except ErrorGroup as err:
+                count = self._skip_failed_item(count, item, err)
             else:
                 if strategy == "temperature":
                     count = max(0, count - 1)
@@ -754,15 +762,15 @@ class Retry:
     ) -> AsyncIterable[T]:
         """
         Asynchronously applies retry logic to each item generated by the given asynchronous generator.
-        This method applies the given asynchronous predicate function to each item generated by the asynchronous
-        generator. If an exception occurs during the execution of the predicate, it will retry the operation up to
-        the `count` number of times, with a delay between retries. The retry strategy can be controlled using the
-        `strategy` parameter.
+        Each item is attempted up to `count` times (see `acall`). An item that still fails after that is
+        logged and skipped (it is absent from the output) and counts against a failure budget of `count` items;
+        once one more item fails the iteration stops with an `ErrorGroup`. This holds for any `signal`.
         Args:
             predicate: The asynchronous function to apply to each item from the generator.
             collection: The asynchronous generator of items to iterate over and apply the predicate to.
-            strategy: The retry strategy to use. "threshold" retries a fixed number of times, while "temperature"
-                        decreases the retry count with each successful operation. Default is "threshold".
+            strategy: How the failure budget is spent. "threshold" gives up after `count` skipped items in
+                      total, while "temperature" forgives one skipped item for each successful item.
+                      Default is "threshold".
         Returns:
             An asynchronous iterable of the results of the predicate applied to each item from the generator.
         Example:
@@ -772,21 +780,12 @@ class Retry:
             ```
         """
         count = 0
-        signal = self.get_signal()
         predicate = self.acall(predicate)
         async for item in collection:
             try:
                 yield await predicate(item)
-            except signal as err:
-                if count >= self.count:
-                    raise ErrorGroup(
-                        "Failed retry operation",
-                        (
-                            RetryError(f"Exceeded max retries: {self.count}"),
-                            err,
-                        ),
-                    ) from err
-                count += 1
+            except ErrorGroup as err:
+                count = self._skip_failed_item(count, item, err)
             else:
                 if strategy == "temperature":
                     count = max(0, count - 1)
@@ -824,16 +823,16 @@ def walk_object(obj: Any, path: str) -> Any:
     for part in parts:
         if v := _index_pattern.match(part):
             idx = int(v.group(1))
-            if TYPE_CHECKING:
-                assert isinstance(value, list | tuple), (
-                    "Expected a list or tuple"
-                )
-            value = value[idx] if len(value) > idx else UNSET
+            value = (
+                value[idx]
+                if isinstance(value, list | tuple) and len(value) > idx
+                else UNSET
+            )
         elif isinstance(value, dict):
             value = value.get(part, UNSET)
         else:
             value = getattr(value, part, UNSET)
-        if value in (None, UNSET):
+        if value is None or value is UNSET:
             break
     return value if value is not UNSET else None
 

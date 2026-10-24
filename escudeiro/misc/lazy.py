@@ -20,6 +20,15 @@ from typing import (
 
 from escudeiro.misc.typex import is_hashable
 
+_MISSING: Any = object()
+
+
+def _typed(value: Any) -> Any:
+    """Key form of a value that keeps `1`, `True` and `1.0` apart."""
+    if isinstance(value, tuple):
+        return (tuple, tuple(_typed(item) for item in value))
+    return (type(value), value)
+
 
 class MethodType(enum.Enum):
     SELF_ONLY = 0
@@ -35,8 +44,10 @@ class lazymethod[SelfT, T, **P]:
         "_method_type",
         "_container",
         "_pos_map",
-        "_signature_length",
         "_default_map",
+        "_var_positional",
+        "_var_keyword",
+        "_named",
     )
 
     format_: ClassVar[str] = "_lazymethod_{method_name}_"
@@ -47,10 +58,12 @@ class lazymethod[SelfT, T, **P]:
         self._container = self._get_container()
         self.public_name = func.__name__
         self.private_name = self.format_.format(method_name=func.__name__)
+        self._var_positional: str | None = None
+        self._var_keyword: str | None = None
+        self._named: frozenset[str] = frozenset()
         self._pos_map, self._default_map = self._make_signature_maps(
             func, self._method_type
         )
-        self._signature_length = len(self._pos_map)
 
     def _make_signature_maps(
         self, func: Callable, method_type: MethodType
@@ -61,11 +74,22 @@ class lazymethod[SelfT, T, **P]:
         pos_map = {}
         default_map = {}
 
-        for pos, param in enumerate(tuple(sig.parameters.values())[1:], 1):
-            pos_map[pos] = param.name
-            if param.default is not Parameter.empty:
-                default_map[param.name] = param.default
+        pos = 0
+        named: set[str] = set()
+        for param in tuple(sig.parameters.values())[1:]:
+            if param.kind is Parameter.VAR_POSITIONAL:
+                self._var_positional = param.name
+            elif param.kind is Parameter.VAR_KEYWORD:
+                self._var_keyword = param.name
+            else:
+                named.add(param.name)
+                if param.kind is not Parameter.KEYWORD_ONLY:
+                    pos += 1
+                    pos_map[pos] = param.name
+                if param.default is not Parameter.empty:
+                    default_map[param.name] = param.default
 
+        self._named = frozenset(named)
         return pos_map, default_map
 
     def _determine_method_type(self, func: Callable) -> MethodType:
@@ -122,14 +146,13 @@ class lazymethod[SelfT, T, **P]:
     def _call(self, instance: SelfT) -> Callable[P, T]:
         @wraps(self._func)
         def _callable(*args: P.args, **kwargs: P.kwargs) -> T:
-            if (
-                value := self._get(
-                    instance,
-                    self.private_name,
-                    args,
-                    kwargs,
-                )
-            ) is not None:
+            value = self._get(
+                instance,
+                self.private_name,
+                args,
+                kwargs,
+            )
+            if value is not _MISSING:
                 return value
             return self._set(instance, *args, **kwargs)
 
@@ -145,7 +168,7 @@ class lazymethod[SelfT, T, **P]:
                 dict[Hashable, T],
                 getattr(instance, self.private_name, self._container()),
             )
-            container[frozenset(kwargs_only.items())] = value
+            container[self._key(kwargs_only, frozenset)] = value
             object.__setattr__(instance, self.private_name, container)
         elif self._container is list:
             kwargs_only = self._signature_to_kwargs(args, kwargs)
@@ -153,7 +176,7 @@ class lazymethod[SelfT, T, **P]:
                 list[tuple[Any, T]],
                 getattr(instance, self.private_name, self._container()),
             )
-            container.append((tuple(kwargs_only.items()), value))
+            container.append((self._key(kwargs_only, tuple), value))
             object.__setattr__(instance, self.private_name, container)
         return value
 
@@ -163,36 +186,40 @@ class lazymethod[SelfT, T, **P]:
         name: str,
         args: Sequence[Any],
         kwargs: dict[str, Any],
-    ) -> T | None:
+    ) -> T | Any:
         if self._container is None:
-            return getattr(instance, name, None)
-        elif self._container is dict:
-            container = getattr(instance, name, None)
-            if container is None:
-                return None
-            kwargs_only = self._signature_to_kwargs(args, kwargs)
-            return container.get(frozenset(kwargs_only.items()))
-        elif self._container is list:
-            container = getattr(instance, name, None)
-            if container is None:
-                return None
-            kwargs_only = self._signature_to_kwargs(args, kwargs)
-            for item in container:
-                if item[0] == tuple(kwargs_only.items()):
-                    return item[1]
-            return None
+            return getattr(instance, name, _MISSING)
+        container = getattr(instance, name, None)
+        if container is None:
+            return _MISSING
+        kwargs_only = self._signature_to_kwargs(args, kwargs)
+        if self._container is dict:
+            return container.get(self._key(kwargs_only, frozenset), _MISSING)
+        key = self._key(kwargs_only, tuple)
+        for item in container:
+            if item[0] == key:
+                return item[1]
+        return _MISSING
+
+    @staticmethod
+    def _key(kwargs_only: dict[str, Any], kind: type) -> Any:
+        return kind((k, _typed(v)) for k, v in kwargs_only.items())
 
     def _signature_to_kwargs(
         self, args: Sequence[Any], kwargs: dict[str, Any]
     ) -> dict[str, Any]:
         result = kwargs.copy()
-        if args:
-            for pos, arg in enumerate(args, 1):
-                result[self._pos_map[pos]] = arg
-        if len(result) != self._signature_length:
-            for name, value in self._default_map.items():
-                if name not in result:
-                    result[name] = value
+        named = len(self._pos_map)
+        for pos, arg in enumerate(args[:named], 1):
+            result[self._pos_map[pos]] = arg
+        if self._var_positional is not None:
+            result[self._var_positional] = tuple(args[named:])
+        for name, value in self._default_map.items():
+            if name not in result:
+                result[name] = value
+        if self._var_keyword is not None:
+            extra = {k: result.pop(k) for k in kwargs if k not in self._named}
+            result[self._var_keyword] = tuple(sorted(extra.items()))
         return {k: result[k] for k in sorted(result)}
 
     @classmethod

@@ -140,3 +140,24 @@ class TestIsValidLink:
         valid_file = tmp_path / "valid_file.txt"
         valid_file.touch()
         assert is_valid_link(valid_file) is False
+
+
+class TestIsExtensionReview:
+    @pytest.mark.parametrize("ext", [".txt", "txt", "TXT", "..txt"])
+    def test_leading_dot_is_ignored(self, ext):
+        assert is_extension("a.txt", ext)
+
+    def test_no_match(self):
+        assert not is_extension("a.txt", ".md", "py")
+
+    def test_compound_extensions(self):
+        assert is_extension("a.tar.gz", "tar.gz")
+        assert is_extension("a.tar.gz", ".tar.gz")
+        assert is_extension("a.tar.gz", ".gz")
+        assert is_extension("x.y.tar.gz", "tar.gz")
+        assert not is_extension("a.gz", "tar.gz")
+        assert not is_extension("a.tar.gz", ".tar")
+
+    def test_dotfile_has_no_extension(self):
+        assert not is_extension(".txt", "txt")
+        assert not is_extension(".tar.gz", "tar.gz")

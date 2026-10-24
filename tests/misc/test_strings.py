@@ -318,3 +318,25 @@ class TestIsNone:
         assert strings.is_none("nan") is False
         assert strings.is_none("0") is False
         assert strings.is_none("1") is False
+
+
+class TestCommaSeparatorEdges:
+    def test_hash_is_not_a_comment(self):
+        assert strings.comma_separator("a,b#c") == ("a", "b#c")
+        assert strings.comma_separator("http://x/#frag,foo") == (
+            "http://x/#frag",
+            "foo",
+        )
+
+    def test_backslashes_are_kept(self):
+        assert strings.comma_separator(r"C:\temp\x,d") == (r"C:\temp\x", "d")
+
+    def test_lone_apostrophe_falls_back_to_plain_split(self):
+        assert strings.comma_separator("it's,fine") == ("it's", "fine")
+
+    def test_quotes_still_group(self):
+        assert strings.comma_separator('"a,b",c') == ("a,b", "c")
+
+    def test_as_boolean_empty_is_false(self):
+        assert strings.as_boolean("") is False
+        assert strings.as_boolean("maybe") is None

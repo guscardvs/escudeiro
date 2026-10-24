@@ -87,7 +87,14 @@ def make_lex_separator[OuterCastT: list | tuple | set | frozenset](
         lex = shlex.shlex(value, posix=True)
         lex.whitespace = ","
         lex.whitespace_split = True
-        return outer_cast(cast(item.strip()) for item in lex)
+        # '#' and '\\' are ordinary characters in values such as URLs and paths
+        lex.commenters = ""
+        lex.escape = ""
+        try:
+            items = list(lex)
+        except ValueError:  # e.g. a lone apostrophe: fall back to a plain split
+            items = value.split(",")
+        return outer_cast(cast(item.strip()) for item in items)
 
     return wrapper
 
@@ -226,7 +233,7 @@ def as_boolean(string: str) -> bool | None:
         string (str): The string to check if it represents a boolean value.
 
     Returns:
-        bool | None: Returns True for "true", "1", "yes"; False for "false", "0", "no"; None for empty string.
+        bool | None: Returns True for "true", "1", "yes"; False for "false", "0", "no" and the empty string.
         If the string does not match any of these, it returns None.
     """
     boolean_map = {
