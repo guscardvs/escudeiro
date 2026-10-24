@@ -5,17 +5,14 @@ from pathlib import Path
 from typing import Any, override
 
 from escudeiro.config.concepts import Env
-from escudeiro.config.core.utils import (
-    none_is_missing,
-    null_cast,
-    valid_path,
-)
+from escudeiro.config.core.utils import valid_path
 from escudeiro.config.interface import MISSING, default_cast
 from escudeiro.data import call_init, data, field
-from escudeiro.exc import SquireError
+from escudeiro.exc import InvalidCast
 from escudeiro.exc.errors import MissingName
 from escudeiro.lazyfields import lazyfield
-from escudeiro.misc.functions import Caster
+from escudeiro.misc import sentence
+from escudeiro.misc.strings import is_none
 
 from .config import Config
 from .mapping import DEFAULT_MAPPING, EnvMapping
@@ -72,7 +69,7 @@ class EnvConfig(Config):
     Extended configuration class that supports environment-specific configurations.
     """
 
-    mapping: EnvMapping = DEFAULT_MAPPING
+    mapping: EnvMapping = field(default=DEFAULT_MAPPING, repr=False)
     env_var: str = "CONFIG_ENV"
     env_cast: Callable[[str], Env] = Env
     dotfiles: Sequence[DotFile] = ()
@@ -113,43 +110,67 @@ class EnvConfig(Config):
 
     def __post_init__(self):
         if self.dotfile:
-            with open(self.dotfile.filename) as buffer:
-                self.file_values.update(self._read_file(buffer))
+            self._load_file(self.dotfile.filename)
 
     @lazyfield
     def env(self) -> Env | None:
         """
         Get the current environment from the configuration.
 
+        The default env is used only when the variable is absent (or null
+        like); a value that does not name an environment always raises.
+
         Returns:
             Env | None: The current environment.
         """
-
-        caster = none_is_missing(Caster(self.env_cast).or_(null_cast))
-        if not self.strict:
-            caster = Caster(caster).safe_cast((MissingName,))
-        try:
-            result = Config.get(
-                self,
-                self.env_var,
-                caster,
-                self.default_env,
+        raw = self._get_val(self.env_var)
+        if isinstance(raw, str) and not is_none(raw):
+            try:
+                env: Env | None = self.env_cast(raw)
+            except Exception as e:
+                # the raw value is left out on purpose, it may be a typo of a secret
+                raise InvalidCast(
+                    sentence(f"{self.env_var} is not a valid environment")
+                ) from e
+            if env is not None:  # pyright: ignore[reportUnnecessaryComparison]
+                return env
+        if self.default_env is not None:
+            return self.default_env
+        if self.dotfile_override is not None:
+            return Env.ALWAYS
+        if self.strict:
+            raise MissingName(
+                sentence(
+                    f"{self.env_var} not found and no default env was given"
+                )
             )
-        except SquireError:
-            if not self.default_env:
-                raise
-            result = None
-        return result or self.default_env
+        return None
+
+    @lazyfield
+    def dotfile_override(self) -> Path | None:
+        """The file named by CONFIG_DOTFILE, if the variable is set."""
+        raw = self._get_val("CONFIG_DOTFILE")
+        if not isinstance(raw, str) or not raw:
+            return None
+        try:
+            return valid_path(raw)
+        except InvalidCast as e:
+            raise InvalidCast(
+                sentence("CONFIG_DOTFILE does not point to an existing path")
+            ) from e
 
     @lazyfield
     def ignore_default(self) -> bool:
         """
         Determine whether to ignore default values based on the current environment.
 
+        The environment is the real one: a CONFIG_DOTFILE override only
+        changes which file is read, never the env the rule is applied to.
+
         Returns:
             bool: True if default values should be ignored, False otherwise.
         """
-        env = self.env or self.default_env
+        env = self.env
         if not env:
             return False
         return self.ignore_default_rule(env)
@@ -180,32 +201,24 @@ class EnvConfig(Config):
         """
         Get the applicable dotfile for the current environment.
 
+        An exact match for the env wins; otherwise the closest cascading
+        dotfile declared for a higher env applies.
+
         Returns:
             DotFile: The applicable dotfile, or None if no matching dotfile is found.
         """
 
-        if dotfile_path := Config.get(
-            self,
-            "CONFIG_DOTFILE",
-            Caster(valid_path).optional,
-            None,
-        ):
-            if dotfile_path.exists():
-                EnvConfig.env.__set__(self, Env.ALWAYS)
-                return DotFile(
-                    filename=dotfile_path,
-                    env=Env.ALWAYS,
-                    cascade=True,
-                )
+        if self.dotfile_override is not None:
+            return DotFile(
+                filename=self.dotfile_override,
+                env=Env.ALWAYS,
+                cascade=True,
+            )
         if not self.env:
             return None
-        for dot in sorted(self.dotfiles, reverse=True):
-            if not dot >= self.env:
-                break
-            if dot.env is not self.env and not (
-                dot.cascade and dot >= self.env
-            ):
-                continue
-            if not os.path.isfile(dot.filename):
-                continue
-            return dot
+        existing = [
+            dot for dot in self.dotfiles if os.path.isfile(dot.filename)
+        ]
+        exact = (dot for dot in existing if dot.env is self.env)
+        cascading = (dot for dot in existing if dot.cascade and dot >= self.env)
+        return next(exact, None) or min(cascading, default=None)

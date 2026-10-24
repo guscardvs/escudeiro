@@ -4,8 +4,13 @@ from pathlib import Path
 from typing import Any, TextIO, overload
 
 from escudeiro.config.interface import MISSING, default_cast
-from escudeiro.data import data
-from escudeiro.exc import InvalidCast, MissingName
+from escudeiro.data import data, field
+from escudeiro.exc import (
+    FailedFileOperation,
+    InvalidCast,
+    MissingName,
+    SquireError,
+)
 from escudeiro.lazyfields import lazyfield
 from escudeiro.misc import (
     closing_quote_position,
@@ -34,30 +39,59 @@ def clean_dotenv_value(value: str) -> str:
     return value
 
 
+class InvalidDotenv(SquireError, ValueError):
+    """Raised when a dotenv file has a line that is not `NAME=VALUE`."""
+
+
 @data
 class Config:
     env_file: str | Path | None = None
-    mapping: Mapping[str, str] = DEFAULT_MAPPING
+    # the mapping usually is os.environ: it must never end up in a repr
+    mapping: Mapping[str, str] = field(default=DEFAULT_MAPPING, repr=False)
+    strict: bool = False
 
     @lazyfield
     def file_values(self) -> dict[str, str]:
         return {}
 
     def __post_init__(self):
-        if self.env_file and os.path.isfile(self.env_file):
-            with open(self.env_file) as stream:
-                self.file_values.update(self._read_file(stream))
+        if self.env_file:
+            self._load_file(self.env_file)
 
-    def _read_file(self, stream: TextIO) -> Iterable[tuple[str, str]]:
-        for line in stream:
+    def _load_file(self, path: str | Path) -> None:
+        if not os.path.isfile(path):
+            if self.strict:
+                raise FailedFileOperation(
+                    sentence(f"env file {path} does not exist")
+                )
+            return
+        try:
+            with open(path, encoding="utf-8-sig") as stream:
+                self.file_values.update(self._read_file(stream, str(path)))
+        except UnicodeDecodeError as e:
+            raise InvalidDotenv(
+                sentence(f"{path} is not a valid utf-8 file")
+            ) from e
+
+    def _read_file(
+        self, stream: TextIO, source: str = "<stream>"
+    ) -> Iterable[tuple[str, str]]:
+        for number, line in enumerate(stream, 1):
             line = line.strip()
             if not line or line.startswith("#"):
                 continue
+            if line.startswith(("export ", "export\t")):
+                line = line[len("export") :].lstrip()
 
-            name, value = line.split("=", maxsplit=1)
+            name, equals, value = line.partition("=")
+            name = name.strip()
+            if not equals or not name:
+                raise InvalidDotenv(
+                    sentence(f"{source}:{number}: expected a NAME=VALUE line")
+                )
             quoted_until = closing_quote_position(value)
             value = strip_comment(value, quoted_until)
-            yield name.strip(), clean_dotenv_value(value)
+            yield name, clean_dotenv_value(value)
 
     def _cast(self, name: str, val: Any, cast: Callable) -> Any:
         try:
@@ -67,8 +101,10 @@ class Config:
             # to allow functions such as null_is_missing to work
             raise
         except Exception as e:
+            # the raw value may be a secret, so only the name is reported
+            cast_name = getattr(cast, "__name__", type(cast).__name__)
             raise InvalidCast(
-                sentence(f"{name} received an invalid value {val}")
+                sentence(f"{name} could not be cast with {cast_name}")
             ) from e
         else:
             return val

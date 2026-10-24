@@ -38,7 +38,7 @@ class AttrsResolverStrategy(FieldResolverStrategy[Attribute]):
     @override
     def default(self) -> Any | type[MISSING]:
         default = self.field.default
-        if default is None or default in (Ellipsis, NOTHING):
+        if default is NOTHING or default is Ellipsis:
             return MISSING
         return default.factory() if isinstance(default, Factory) else default
 
@@ -46,4 +46,4 @@ class AttrsResolverStrategy(FieldResolverStrategy[Attribute]):
     @classmethod
     def iterfield(cls, config_class: type) -> Generator[Attribute, Any, Any]:
         _ = cls
-        yield from fields(config_class)
+        yield from (item for item in fields(config_class) if item.init)

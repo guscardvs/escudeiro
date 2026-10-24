@@ -1,13 +1,11 @@
 import pytest
 
-from escudeiro.config import get_config, get_env, set_config
-from escudeiro.config.core.context import (
-    _default_config,  # pyright: ignore[reportPrivateUsage]
-    config,
-)
+from escudeiro.config import Env, get_config, get_env, set_config
+from escudeiro.config.core import context
+from escudeiro.config.core.context import config
 from escudeiro.config.core.envconfig import EnvConfig
 from escudeiro.config.core.mapping import EnvMapping
-from escudeiro.exc.errors import AlreadySet
+from escudeiro.exc.errors import AlreadySet, MissingName
 
 
 class TestConfigContext:
@@ -18,7 +16,8 @@ class TestConfigContext:
         This replaces the setUp and tearDown methods from unittest.
         The `yield` keyword ensures that the `reset` happens after the test is run.
         """
-        token = config.set(_default_config)
+        token = config.set(None)
+        monkeypatch.setattr(context, "_default_config", None)
         monkeypatch.setenv("CONFIG_ENV", "test")
         yield
         config.reset(token)
@@ -28,7 +27,24 @@ class TestConfigContext:
         Test that get_config() returns the default configuration
         when no other configuration has been set.
         """
-        assert get_config() is _default_config
+        default = get_config()
+
+        assert isinstance(default, EnvConfig)
+        assert get_config() is default
+        assert config.get() is None
+
+    def test_default_config_is_built_on_first_use(self):
+        """CONFIG_ENV set after import (here: by the fixture) is honored."""
+        assert get_config().env is Env.TEST
+        assert get_env() is Env.TEST
+
+    def test_get_env_without_env_names_the_variable(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        monkeypatch.delenv("CONFIG_ENV")
+
+        with pytest.raises(MissingName, match="CONFIG_ENV"):
+            get_env()
 
     def test_set_config_successfully(self):
         """

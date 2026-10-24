@@ -1569,6 +1569,20 @@ class TestCasterRuleFailuresAreSafe:
         assert caster.safe_cast()("-3") is None
 
 
+class TestCasterName:
+    def test_name_is_a_string_not_a_bound_method(self):
+        assert Caster(int).__name__ == "int"
+        assert Caster(int, name="custom").__name__ == "custom"
+        assert Caster.__name__ == "Caster"
+
+    def test_derived_names_embed_the_name(self):
+        caster = Caster(int).join(Caster(float, name="decimal"))
+
+        assert caster.__name__ == "int.join(decimal)"
+        assert Caster(caster).__name__ == "int.join(decimal)"
+        assert "bound method" not in Caster(int).or_(Caster(float)).__name__
+
+
 class TestWalkObjectEdges:
     def test_index_on_dict_or_scalar_is_missing(self):
         assert walk_object({"a": {"x": 1}}, "a.[0]") is None

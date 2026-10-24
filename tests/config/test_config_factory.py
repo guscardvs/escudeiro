@@ -189,13 +189,12 @@ def test_boolean_cast_works_correctly():
         .load(CustomConfig)
         .is_valid
     )
-    assert (
-        not config.AdapterConfigFactory(
-            config.Config(mapping=config.EnvMapping({"IS_VALID": "invalid"}))
-        )
-        .load(CustomConfig)
-        .is_valid
-    )
+    for invalid in ("invalid", "on", "y", "maybe", " true "):
+        with pytest.raises(InvalidCast) as exc_info:
+            config.AdapterConfigFactory(
+                config.Config(mapping=config.EnvMapping({"IS_VALID": invalid}))
+            ).load(CustomConfig)
+        assert "IS_VALID" in str(exc_info.value)
     assert (
         config.AdapterConfigFactory(
             config.Config(mapping=config.EnvMapping({"IS_VALID": "True"}))
@@ -424,3 +423,91 @@ def test_memo_factory_primary_is_loaded_if_prefix_is_empty():
     assert memo_factory.load(
         Person, __prefix__="person", __primary__=True
     ) is memo_factory.load(Person)
+
+
+def _person_memo_factory(**values: str) -> MemoFactory:
+    return MemoFactory(config.Config(mapping=config.EnvMapping(values)))
+
+
+@data
+class Counter:
+    x: int = 0
+
+
+def test_memo_factory_key_includes_defaults():
+    memo_factory = _person_memo_factory()
+
+    first = memo_factory.load(Counter, x=1)
+    second = memo_factory.load(Counter, x=9)
+
+    assert (first.x, second.x) == (1, 9)
+    assert memo_factory.load(Counter, x=9) is second
+    assert memo_factory.load(Counter, x=1) is first
+
+
+def test_memo_factory_key_includes_presets():
+    memo_factory = _person_memo_factory()
+
+    first = memo_factory.load(Counter, presets={"x": 1})
+    second = memo_factory.load(Counter, presets={"x": 2})
+
+    assert (first.x, second.x) == (1, 2)
+
+
+def test_memo_factory_key_includes_separator():
+    @data
+    class Inner:
+        value: int = 0
+
+    @data
+    class Outer:
+        inner: Inner
+
+    memo_factory = _person_memo_factory(INNER_VALUE="1", INNER__VALUE="2")
+
+    assert memo_factory.load(Outer, __sep__="_").inner.value == 1
+    assert memo_factory.load(Outer, __sep__="__").inner.value == 2
+
+
+def test_memo_factory_key_tolerates_unhashable_arguments():
+    memo_factory = _person_memo_factory()
+    preset = {"x": [1, {"a": {2}}]}
+
+    first = memo_factory.load(Counter, presets=preset)
+
+    assert memo_factory.load(Counter, presets={"x": [1, {"a": {2}}]}) is first
+
+
+def test_memo_factory_distinguishes_equal_values_of_other_types():
+    memo_factory = _person_memo_factory()
+
+    assert memo_factory.load(Counter, x=1) is not memo_factory.load(
+        Counter, x=True
+    )
+
+
+def test_memo_factory_primary_does_not_hide_explicit_arguments():
+    memo_factory = _person_memo_factory()
+    primary = memo_factory.load(Counter, __primary__=True)
+
+    assert memo_factory.load(Counter) is primary
+    assert memo_factory.load(Counter, x=9).x == 9
+
+
+def test_memo_factory_caches_falsy_results():
+    calls: list[int] = []
+
+    @dataclasses.dataclass
+    class Falsy:
+        x: int = 0
+
+        def __post_init__(self):
+            calls.append(1)
+
+        def __bool__(self):
+            return False
+
+    memo_factory = _person_memo_factory()
+
+    assert memo_factory.load(Falsy) is memo_factory.load(Falsy)
+    assert calls == [1]
