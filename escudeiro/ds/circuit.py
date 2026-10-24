@@ -38,6 +38,7 @@ class CircuitBreaker:
     _lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     _frozen: bool = field(default=False)
     _freeze_future: asyncio.Future | None = field(default=None)
+    _unfreeze_task: asyncio.Task | None = field(default=None)
 
     async def execute(
         self,
@@ -71,7 +72,8 @@ class CircuitBreaker:
                         await self._freeze(e)
 
         if self._freeze_future is not None:
-            await self._freeze_future
+            # shielded: one cancelled waiter must not cancel the shared future
+            await asyncio.shield(self._freeze_future)
 
         return await func(*args, **kwargs)
 
@@ -91,14 +93,26 @@ class CircuitBreaker:
         self._freeze_future = frozen_future
 
         async def unfreeze():
-            try:
-                await self.freeze_function()
-                self._frozen = False
-                frozen_future.set_result(None)
-            except Exception as e:
-                frozen_future.set_exception(e)
+            await self.freeze_function()
 
-        _ = asyncio.create_task(unfreeze())
+        def unfrozen(task: asyncio.Task[None]) -> None:
+            # A done callback runs however the task ends, even when it is
+            # cancelled before its first step, so the breaker cannot stay
+            # frozen and waiters cannot hang.
+            self._frozen = False
+            if frozen_future.done():
+                return
+            if task.cancelled():
+                _ = frozen_future.cancel()
+            elif (error := task.exception()) is not None:
+                # Waiters get the freeze error; the breaker is unfrozen anyway.
+                frozen_future.set_exception(error)
+            else:
+                frozen_future.set_result(None)
+
+        # Keep a strong reference: a bare create_task may be garbage collected.
+        self._unfreeze_task = asyncio.create_task(unfreeze())
+        self._unfreeze_task.add_done_callback(unfrozen)
 
 
 def with_circuit_breaker(circuit_breaker: CircuitBreaker):

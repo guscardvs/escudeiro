@@ -147,3 +147,110 @@ async def test_async_pool_recycle():
     # Release all resources and dispose of the pool
     await pool.release(r3)
     await pool.dispose()
+
+
+# --- regressions: ticket accounting, recycle semantics ------------------
+
+
+class Plain:
+    pass
+
+
+async def make_plain():
+    return Plain()
+
+
+async def noop_release(_: Plain):
+    return None
+
+
+async def test_dispose_does_not_shrink_capacity():
+    pool = AsyncPool(make_plain, noop_release, pool_size=3)
+    for r in [await pool.acquire() for _ in range(3)]:
+        await pool.release(r)
+    await pool.dispose()
+
+    assert pool._available == 3
+    # all three tickets are still usable (was: the next acquire blocked)
+    held = [await asyncio.wait_for(pool.acquire(), 0.3) for _ in range(3)]
+    assert len({id(r) for r in held}) == 3
+
+
+async def test_failed_factory_returns_the_ticket():
+    calls = 0
+
+    async def factory():
+        nonlocal calls
+        calls += 1
+        if calls <= 3:
+            raise RuntimeError("factory down")
+        return Plain()
+
+    pool = AsyncPool(factory, noop_release, pool_size=3)
+    for _ in range(3):
+        with pytest.raises(RuntimeError):
+            await pool.acquire()
+    assert pool._available == 3
+    assert await asyncio.wait_for(pool.acquire(), 0.3) is not None
+
+
+async def test_cancelled_acquire_returns_the_ticket():
+    started = asyncio.Event()
+
+    async def slow_factory():
+        started.set()
+        await asyncio.Event().wait()
+
+    pool = AsyncPool(slow_factory, noop_release, pool_size=2)
+    task = asyncio.create_task(pool.acquire())
+    _ = await started.wait()
+    _ = task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert pool._available == 2
+
+
+async def test_failed_recycle_returns_the_ticket():
+    broken = False
+
+    async def releaser(_: Plain):
+        if broken:
+            raise RuntimeError("cannot release")
+
+    pool = AsyncPool(make_plain, releaser, pool_size=1, pool_recycle=0.01)
+    r = await pool.acquire()
+    await pool.release(r)
+    await asyncio.sleep(0.03)
+    broken = True
+    with pytest.raises(RuntimeError):
+        await pool.acquire()
+    assert pool._available == 1
+
+
+async def test_blocked_acquire_takes_over_the_released_ticket():
+    pool = AsyncPool(make_plain, noop_release, pool_size=1)
+    first = await pool.acquire()
+    waiter = asyncio.create_task(pool.acquire())
+    await asyncio.sleep(0.02)
+    assert not waiter.done()  # blocked: the only ticket is out
+    await pool.release(first)
+    assert await asyncio.wait_for(waiter, 0.3) is first
+    assert pool._available == 0
+    await pool.release(first)
+    assert pool._available == 1
+
+
+async def test_prefill_respects_checked_out_resources():
+    pool = AsyncPool(make_plain, noop_release, pool_size=2)
+    out = await pool.acquire()
+    await pool.prefill(5)
+    assert pool.resources.qsize() == 1
+    await pool.release(out)  # must not overflow the queue
+    assert pool.resources.qsize() == 2
+
+
+async def test_pool_recycle_zero_disables_recycling():
+    pool = AsyncPool(make_plain, noop_release, pool_recycle=0)
+    r = await pool.acquire()
+    await pool.release(r)
+    assert await pool.acquire() is r

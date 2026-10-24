@@ -3,50 +3,65 @@
 import asyncio
 import datetime
 import uuid
-from contextlib import aclosing
-from typing import Any
+from collections.abc import AsyncIterator, Callable
+from contextlib import asynccontextmanager
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
+from zoneinfo import ZoneInfo
 
 import pytest
 
 # Import the actual classes
 from escudeiro.ds import CronInfo, Task, TaskScheduler
-
-# Import the classes to test - adjust path as needed
+from escudeiro.escudeiro_pyrs import cronjob
 from escudeiro.misc import make_noop, timezone
 
+UTC = datetime.UTC
+MINUS_3 = datetime.timezone(datetime.timedelta(hours=-3))
 
-# Fixtures for common test objects
-@pytest.fixture
-def task_scheduler():
-    scheduler = TaskScheduler(
-        log_info=lambda msg: None,
-        log_warning=lambda msg: None,
-        log_exception=lambda msg: None,
-    )
-    return scheduler
+
+@asynccontextmanager
+async def scheduler_ctx(**kwargs: Any) -> AsyncIterator[TaskScheduler]:
+    """A scheduler with a real, started TaskManager (no mocks)."""
+    scheduler = TaskScheduler(**kwargs)
+    await scheduler.setup()
+    try:
+        yield scheduler
+    finally:
+        await scheduler.stop()
+
+
+@asynccontextmanager
+async def running(
+    scheduler: TaskScheduler,
+) -> AsyncIterator[asyncio.Task[None]]:
+    """Run ``scheduler.start()`` in the background; stop it on exit."""
+    run = asyncio.create_task(scheduler.start())
+    for _ in range(5):  # let the loop reach its first sleep
+        await asyncio.sleep(0)
+    try:
+        yield run
+    finally:
+        await scheduler.stop()
+        await asyncio.wait_for(run, 1)
+
+
+async def until(predicate: Callable[[], bool], timeout: float = 1.0) -> None:
+    async def _poll():
+        while not predicate():
+            await asyncio.sleep(0.005)
+
+    await asyncio.wait_for(_poll(), timeout)
+
+
+def fake_clock(start: datetime.datetime):
+    cell = [start]
+    return cell, lambda: cell[0]
 
 
 @pytest.fixture
 def sample_cron_info():
     return CronInfo(cronexpr="*/5 * * * *")
-
-
-@pytest.fixture
-async def scheduler_with_mock_manager():
-    # Create a scheduler with a mocked TaskManager
-    async with aclosing(TaskScheduler()) as scheduler:
-        await scheduler.setup()
-        scheduler.manager = MagicMock(wraps=scheduler.manager)
-        scheduler.manager.spawn = MagicMock(wraps=scheduler.manager.spawn)
-        scheduler.manager.close = MagicMock(wraps=scheduler.manager.close)
-
-        # Create mocked logging functions that track calls
-        scheduler.log_info = MagicMock()
-        scheduler.log_warning = MagicMock()
-        scheduler.log_exception = MagicMock()
-
-        yield scheduler
 
 
 # Basic Task Tests
@@ -111,6 +126,19 @@ class TestTask:
         await task.reset()
         assert await task.status() is False
 
+    async def test_task_claim(self):
+        task = Task(
+            id_="test-id",
+            func=lambda: None,
+            cron=None,
+            next_run=datetime.datetime.now(tz=datetime.UTC),
+        )
+        assert task.claim() is True
+        assert task.claim() is False  # already owned
+        assert await task.run_count() == 1
+        await task.reset()
+        assert task.claim() is True
+
 
 # CronInfo Tests
 class TestCronInfo:
@@ -118,15 +146,17 @@ class TestCronInfo:
         """Test CronInfo initialization"""
         cron_info = CronInfo(cronexpr="*/5 * * * *")
         assert cron_info.cronexpr == "*/5 * * * *"
-        assert (
-            cron_info.timezone is not None
-        )  # Should default to local timezone
+        assert cron_info.timezone is UTC  # explicit, DST-free default
 
     def test_cron_info_with_timezone(self):
         """Test CronInfo with explicit timezone"""
         tz = datetime.UTC
         cron_info = CronInfo(cronexpr="*/5 * * * *", timezone=tz)
         assert cron_info.timezone == tz
+
+    def test_cron_info_accepts_zoneinfo(self):
+        ny = ZoneInfo("America/New_York")
+        assert CronInfo("0 9 * * *", ny).timezone is ny
 
 
 # TaskScheduler Tests
@@ -149,12 +179,9 @@ class TestTaskScheduler:
         except ValueError:
             pytest.fail("Generated task ID is not a valid UUID")
 
-    async def test_schedule_task_with_cron(
-        self,
-        scheduler_with_mock_manager: TaskScheduler,
-    ):
+    def test_schedule_task_with_cron(self):
         """Test scheduling a task with cron expression"""
-        scheduler = scheduler_with_mock_manager
+        scheduler = TaskScheduler()
         cron_info = CronInfo(cronexpr="*/5 * * * *")
 
         task_id = scheduler.schedule_task(
@@ -168,11 +195,9 @@ class TestTaskScheduler:
         assert scheduler._tasks[task_id].name == "test-cron-task"
         assert scheduler._tasks[task_id].cron is not None
 
-    async def test_schedule_task_with_run_at(
-        self, scheduler_with_mock_manager: TaskScheduler
-    ):
+    def test_schedule_task_with_run_at(self):
         """Test scheduling a one-time task"""
-        scheduler = scheduler_with_mock_manager
+        scheduler = TaskScheduler()
         run_time = timezone.now() + datetime.timedelta(minutes=10)
 
         task_id = scheduler.schedule_task(
@@ -190,11 +215,9 @@ class TestTaskScheduler:
             < 1
         )  # Almost equal
 
-    async def test_schedule_task_validation(
-        self, scheduler_with_mock_manager: TaskScheduler
-    ):
+    def test_schedule_task_validation(self):
         """Test validation in schedule_task"""
-        scheduler = scheduler_with_mock_manager
+        scheduler = TaskScheduler()
 
         # Test missing both cron_expr and run_at
         with pytest.raises(
@@ -214,11 +237,9 @@ class TestTaskScheduler:
                 run_at=timezone.now(),
             )
 
-    async def test_is_scheduled(
-        self, scheduler_with_mock_manager: TaskScheduler
-    ):
+    def test_is_scheduled(self):
         """Test is_scheduled method"""
-        scheduler = scheduler_with_mock_manager
+        scheduler = TaskScheduler()
         cron_info = CronInfo(cronexpr="*/5 * * * *")
 
         task_id = scheduler.schedule_task(
@@ -228,9 +249,9 @@ class TestTaskScheduler:
         assert scheduler.is_scheduled(task_id) is True
         assert scheduler.is_scheduled("non-existent-id") is False
 
-    async def test_get_task(self, scheduler_with_mock_manager: TaskScheduler):
+    def test_get_task(self):
         """Test get_task method"""
-        scheduler = scheduler_with_mock_manager
+        scheduler = TaskScheduler()
         cron_info = CronInfo(cronexpr="*/5 * * * *")
 
         task_id = scheduler.schedule_task(
@@ -247,9 +268,9 @@ class TestTaskScheduler:
         non_existent_task = scheduler.get_task("non-existent-id")
         assert non_existent_task is None
 
-    async def test_task_ids(self, scheduler_with_mock_manager: TaskScheduler):
+    def test_task_ids(self):
         """Test task_ids method"""
-        scheduler = scheduler_with_mock_manager
+        scheduler = TaskScheduler()
         cron_info = CronInfo(cronexpr="*/5 * * * *")
 
         # Initially empty
@@ -269,11 +290,9 @@ class TestTaskScheduler:
         assert task_id1 in task_ids
         assert task_id2 in task_ids
 
-    async def test_remove_task(
-        self, scheduler_with_mock_manager: TaskScheduler
-    ):
+    async def test_remove_task(self):
         """Test remove_task method"""
-        scheduler = scheduler_with_mock_manager
+        scheduler = TaskScheduler()
         cron_info = CronInfo(cronexpr="*/5 * * * *")
         callback = AsyncMock()
 
@@ -296,11 +315,9 @@ class TestTaskScheduler:
         # Callback should still be called just once from the previous successful removal
         assert callback.call_count == 1
 
-    async def test_remove_by_name(
-        self, scheduler_with_mock_manager: TaskScheduler
-    ):
+    async def test_remove_by_name(self):
         """Test remove_by_name method"""
-        scheduler = scheduler_with_mock_manager
+        scheduler = TaskScheduler()
         cron_info = CronInfo(cronexpr="*/5 * * * *")
         callback = AsyncMock()
 
@@ -325,320 +342,305 @@ class TestTaskScheduler:
         # Callback should still be called just once from the previous successful removal
         assert callback.call_count == 1
 
-    async def test_execute_task_sync_function(
-        self, scheduler_with_mock_manager: TaskScheduler
-    ):
+    async def test_execute_task_sync_function(self):
         """Test execution of synchronous task function"""
-        scheduler = scheduler_with_mock_manager
-        mock_func = MagicMock()
-
-        task = Task(
-            id_="test-id",
-            func=mock_func,
-            cron=None,
-            next_run=timezone.now(),
-            name="test-sync-task",
-        )
-
-        await scheduler._execute_task(task)
-
-        # The function should have been called
-        mock_func.assert_called_once()
-        # Task should be marked as not running after execution
-        assert await task.status() is False
-
-    async def test_execute_task_async_function(
-        self, scheduler_with_mock_manager: TaskScheduler
-    ):
-        """Test execution of asynchronous task function"""
-        scheduler = scheduler_with_mock_manager
-        mock_func = AsyncMock()
-
-        task = Task(
-            id_="test-id",
-            func=mock_func,
-            cron=None,
-            next_run=timezone.now(),
-            name="test-async-task",
-        )
-
-        await scheduler._execute_task(task)
-
-        # The function should have been called
-        mock_func.assert_called_once()
-        # Task should be marked as not running after execution
-        assert await task.status() is False
-
-    async def test_execute_task_handles_exceptions(
-        self, scheduler_with_mock_manager: TaskScheduler
-    ):
-        """Test that exceptions in task execution are handled"""
-        scheduler = scheduler_with_mock_manager
-
-        # Function that raises an exception
-        def failing_func():
-            raise ValueError("Task failed intentionally")
-
-        task = Task(
-            id_="test-id",
-            func=failing_func,
-            cron=None,
-            next_run=timezone.now(),
-            name="test-failing-task",
-        )
-
-        # This should not raise
-        await scheduler._execute_task(task)
-
-        # Exception should be logged
-        scheduler.log_exception.assert_called_once()
-        assert "failed" in scheduler.log_exception.call_args[0][0]
-
-        # Task should be marked as not running despite exception
-        assert await task.status() is False
-
-    async def test_execute_task_removes_one_time_task(
-        self, scheduler_with_mock_manager: TaskScheduler
-    ):
-        """Test that one-time tasks are removed after execution"""
-        scheduler = scheduler_with_mock_manager
-        mock_func = MagicMock()
-        remove_callback = AsyncMock()
-
-        task = Task(
-            id_="test-id",
-            func=mock_func,
-            cron=None,
-            next_run=timezone.now(),
-            name="test-one-time-task",
-            remove_callback=remove_callback,
-        )
-
-        scheduler._tasks["test-id"] = task
-
-        await scheduler._execute_task(task)
-
-        # Task should be removed and manager should spawn removal process
-        scheduler.manager.spawn.assert_called_once()
-
-    async def test_execute_task_reschedules_cron_task(
-        self, scheduler_with_mock_manager: TaskScheduler
-    ):
-        """Test that cron tasks are rescheduled after execution"""
-        scheduler = scheduler_with_mock_manager
-        mock_func = MagicMock()
-
-        # Create a task with a mock cron expression
-        mock_cron = MagicMock()
-        mock_cron.update_after = MagicMock()
-        mock_cron.next_run = timezone.now() + datetime.timedelta(minutes=5)
-
-        task = Task(
-            id_="test-id",
-            func=mock_func,
-            cron=mock_cron,
-            next_run=timezone.now(),
-            name="test-cron-task",
-        )
-
-        scheduler._tasks["test-id"] = task
-        initial_next_run = task.next_run
-
-        await scheduler._execute_task(task)
-
-        # Function should be called
-        mock_func.assert_called_once()
-
-        # Cron expression should be updated
-        mock_cron.update_after.assert_called_once()
-
-        # Next run should be different after rescheduling
-        assert task.next_run != initial_next_run
-
-    async def test_execute_tasks_concurrent(
-        self, scheduler_with_mock_manager: TaskScheduler
-    ):
-        """Test that multiple tasks can be executed concurrently"""
-        scheduler = scheduler_with_mock_manager
-
-        # Create a set of mock functions that we can track
-        mock_funcs = [AsyncMock() for _ in range(5)]
-        tasks = []
-
-        # Create tasks for each function
-        for i, mock_func in enumerate(mock_funcs):
+        async with scheduler_ctx() as scheduler:
+            mock_func = MagicMock()
             task = Task(
-                id_=f"test-id-{i}",
+                id_="test-id",
                 func=mock_func,
                 cron=None,
                 next_run=timezone.now(),
-                name=f"test-task-{i}",
+                name="test-sync-task",
             )
-            tasks.append(task)
-            scheduler._tasks[task.id_] = task
 
-        # Execute all tasks concurrently
-        await scheduler._execute_tasks(tasks)
+            await scheduler._execute_task(task)
 
-        # All functions should have been called
-        for mock_func in mock_funcs:
+            # The function should have been called
             mock_func.assert_called_once()
+            # Task should be marked as not running after execution
+            assert await task.status() is False
 
-    async def test_execute_tasks_handles_exceptions(
-        self, scheduler_with_mock_manager: TaskScheduler
-    ):
-        """Test that exceptions in concurrent task execution are handled"""
-        scheduler = scheduler_with_mock_manager
-
-        # Create mixed set of succeeding and failing functions
-        success_func = AsyncMock()
-
-        def failing_func():
-            raise ValueError("Task failed intentionally")
-
-        tasks = [
-            Task(
-                id_="task-1",
-                func=success_func,
+    async def test_execute_task_async_function(self):
+        """Test execution of asynchronous task function"""
+        async with scheduler_ctx() as scheduler:
+            mock_func = AsyncMock()
+            task = Task(
+                id_="test-id",
+                func=mock_func,
                 cron=None,
                 next_run=timezone.now(),
-                name="success-task",
-            ),
-            Task(
-                id_="task-2",
+                name="test-async-task",
+            )
+
+            await scheduler._execute_task(task)
+
+            mock_func.assert_called_once()
+            assert await task.status() is False
+
+    async def test_execute_task_handles_exceptions(self):
+        """Test that exceptions in task execution are handled"""
+        logs: list[str] = []
+        async with scheduler_ctx(log_exception=logs.append) as scheduler:
+
+            def failing_func():
+                raise ValueError("Task failed intentionally")
+
+            task = Task(
+                id_="test-id",
                 func=failing_func,
                 cron=None,
                 next_run=timezone.now(),
-                name="failing-task",
-            ),
-        ]
+                name="test-failing-task",
+            )
 
-        for task in tasks:
-            scheduler._tasks[task.id_] = task
+            # This should not raise
+            await scheduler._execute_task(task)
 
-        # This should not raise despite one task failing
-        await scheduler._execute_tasks(tasks)
+            assert len(logs) == 1
+            assert "failed" in logs[0]
+            # Task should be marked as not running despite exception
+            assert await task.status() is False
 
-        # The successful function should have been called
-        success_func.assert_called_once()
+    async def test_execute_task_already_running_is_skipped(self):
+        logs: list[str] = []
+        async with scheduler_ctx(log_warning=logs.append) as scheduler:
+            func = MagicMock()
+            task = Task(id_="t", func=func, cron=None, next_run=timezone.now())
+            await task.set()
+            await scheduler._execute_task(task)
+            func.assert_not_called()
+            assert "already running" in logs[0]
 
-        # The exception should be logged
-        scheduler.log_exception.assert_called_once()
+    async def test_execute_task_removes_one_time_task(self):
+        """Test that one-time tasks are removed after execution"""
+        async with scheduler_ctx() as scheduler:
+            remove_callback = AsyncMock()
+            task = Task(
+                id_="test-id",
+                func=MagicMock(),
+                cron=None,
+                next_run=timezone.now(),
+                name="test-one-time-task",
+                remove_callback=remove_callback,
+            )
+            scheduler._tasks["test-id"] = task
 
-    async def test_calculate_and_sleep(
-        self,
-        scheduler_with_mock_manager: TaskScheduler,
-        monkeypatch: pytest.MonkeyPatch,
-    ):
-        """Test calculation of sleep time between task checks"""
-        scheduler = scheduler_with_mock_manager
+            await scheduler._execute_task(task)
+            await until(lambda: not scheduler.is_scheduled("test-id"))
 
-        # Mock asyncio.sleep to avoid actual sleeping
-        mock_sleep = AsyncMock()
-        monkeypatch.setattr(asyncio, "sleep", mock_sleep)
+            remove_callback.assert_awaited_once_with("test-id")
 
-        # Case 1: No tasks - should sleep for default interval
-        scheduler._tasks.clear()
-        await scheduler._calculate_and_sleep()
-        mock_sleep.assert_called_with(scheduler.default_sleep_interval)
-
-        # Case 2: With task(s) - should sleep until next task
-        future_time = timezone.now() + datetime.timedelta(seconds=30)
-        task = Task(
-            id_="test-id",
-            func=lambda: None,
-            cron=None,
-            next_run=future_time,
-            name="test-task",
+    async def test_execute_task_reschedules_cron_task(self):
+        """Cron tasks get their next run from a real CronExpr."""
+        cell, clock = fake_clock(
+            datetime.datetime(2024, 1, 1, 10, 0, tzinfo=UTC)
         )
-        scheduler._tasks["test-id"] = task
+        async with scheduler_ctx(clock=clock) as scheduler:
+            func = MagicMock()
+            task_id = scheduler.schedule_task(
+                func, CronInfo("*/5 * * * *"), None, name="cron"
+            )
+            task = scheduler._tasks[task_id]
+            assert task.next_run == datetime.datetime(
+                2024, 1, 1, 10, 5, tzinfo=UTC
+            )
 
-        mock_sleep.reset_mock()
-        await scheduler._calculate_and_sleep()
+            cell[0] = datetime.datetime(2024, 1, 1, 10, 5, 1, tzinfo=UTC)
+            await scheduler._execute_task(task)
 
-        # Should be called with time until next task (within a small margin)
-        call_arg = mock_sleep.call_args[0][0]
-        assert 0 <= call_arg <= 30  # Between 0 and 30 seconds
+            func.assert_called_once()
+            assert task.next_run == datetime.datetime(
+                2024, 1, 1, 10, 10, tzinfo=UTC
+            )
+            assert scheduler.is_scheduled(task_id)
 
-    async def test_scheduler_loop(
-        self,
-        scheduler_with_mock_manager: TaskScheduler,
-    ):
-        """Test the main scheduler loop"""
-        scheduler = scheduler_with_mock_manager
+    # --- regressions for the review findings ---------------------------
 
-        # Mock methods to avoid actual execution
-        _original_exec_tasks = TaskScheduler._execute_tasks
-        _original_calc = TaskScheduler._calculate_and_sleep
-        TaskScheduler._execute_tasks = AsyncMock()
-        TaskScheduler._calculate_and_sleep = AsyncMock()
-
-        # Set up a task due for execution
-        mock_func = MagicMock()
-        _task_status = Task.status
-        Task.status = AsyncMock(return_value=False)
-        task = Task(
-            id_="test-id",
-            func=mock_func,
-            cron=None,
-            next_run=timezone.now() - datetime.timedelta(seconds=1),  # Past due
-            name="test-task",
+    def test_cron_next_run_is_relative_to_finish_time(self):
+        """`* * * * *` finishing at 10:00:00.2 runs at 10:01, not 10:02."""
+        _, clock = fake_clock(
+            datetime.datetime(2024, 1, 1, 10, 0, 0, 200_000, tzinfo=UTC)
         )
-        scheduler._tasks["test-id"] = task
+        scheduler = TaskScheduler(clock=clock)
+        task_id = scheduler.schedule_task(
+            lambda: None, CronInfo("* * * * *"), None
+        )
+        task = scheduler._tasks[task_id]
+        scheduler._reschedule_task(task, clock())
+        assert task.next_run == datetime.datetime(2024, 1, 1, 10, 1, tzinfo=UTC)
 
-        # Start the scheduler and let it run one iteration
-        scheduler._running = True
+    def test_cron_reschedule_keeps_cron_timezone(self):
+        """09:00-03:00 must stay 09:00-03:00 on later runs (was 09:00 UTC)."""
+        _, clock = fake_clock(
+            datetime.datetime(2024, 1, 1, 8, 0, tzinfo=MINUS_3)
+        )
+        scheduler = TaskScheduler(clock=clock)
+        task_id = scheduler.schedule_task(
+            lambda: None, CronInfo("0 9 * * *", MINUS_3), None
+        )
+        task = scheduler._tasks[task_id]
+        assert task.next_run == datetime.datetime(2024, 1, 1, 9, tzinfo=MINUS_3)
 
-        # Run one iteration then stop
-        async def side_effect(*args: Any, **kwargs: Any):
-            _ = args, kwargs
-            scheduler._running = False
+        # the finish time may be given in any zone (the loop uses UTC clocks)
+        finished = datetime.datetime(2024, 1, 1, 12, 0, 0, 500_000, tzinfo=UTC)
+        scheduler._reschedule_task(task, finished)
+        assert task.next_run == datetime.datetime(2024, 1, 2, 9, tzinfo=MINUS_3)
+        assert task.next_run.utcoffset() == datetime.timedelta(hours=-3)
 
-        scheduler._calculate_and_sleep.side_effect = side_effect
+    def test_cron_with_zoneinfo_follows_dst(self):
+        ny = ZoneInfo("America/New_York")
+        scheduler = TaskScheduler()
+        task_id = scheduler.schedule_task(
+            lambda: None, CronInfo("0 9 * * *", ny), None
+        )
+        task = scheduler._tasks[task_id]
+        # 2024-03-09 10:00 EST; DST starts on the 10th -> 09:00 EDT = 13:00Z
+        scheduler._reschedule_task(
+            task, datetime.datetime(2024, 3, 9, 15, 0, tzinfo=UTC)
+        )
+        assert task.next_run == datetime.datetime(2024, 3, 10, 13, tzinfo=UTC)
 
-        await scheduler._scheduler_loop()
+    async def test_cron_task_keeps_timezone_after_running(self):
+        cell, clock = fake_clock(
+            datetime.datetime(2024, 1, 1, 8, 0, tzinfo=MINUS_3)
+        )
+        done = asyncio.Event()
 
-        # The execute_tasks method should be called with our task
-        scheduler._execute_tasks.assert_called_once()
-        assert len(scheduler._execute_tasks.call_args[0][0]) == 1
-        assert scheduler._execute_tasks.call_args[0][0][0].id_ == "test-id"
+        async def job():
+            done.set()
 
-        TaskScheduler._execute_tasks = _original_exec_tasks
-        TaskScheduler._calculate_and_sleep = _original_calc
-        Task.status = _task_status
+        async with scheduler_ctx(clock=clock) as scheduler:
+            task_id = scheduler.schedule_task(
+                job, CronInfo("0 9 * * *", MINUS_3), None
+            )
+            task = scheduler._tasks[task_id]
+            first = task.next_run
+            assert first == datetime.datetime(2024, 1, 1, 9, tzinfo=MINUS_3)
+            cell[0] = datetime.datetime(
+                2024, 1, 1, 9, 0, 0, 500_000, tzinfo=MINUS_3
+            )
+            async with running(scheduler):
+                await asyncio.wait_for(done.wait(), 1)
+                await until(lambda: task.next_run != first)
+            assert task.next_run == datetime.datetime(
+                2024, 1, 2, 9, tzinfo=MINUS_3
+            )
+            assert task.next_run.utcoffset() == datetime.timedelta(hours=-3)
 
-    async def test_start_stop(self, scheduler_with_mock_manager: TaskScheduler):
-        """Test starting and stopping the scheduler"""
-        scheduler = scheduler_with_mock_manager
+    async def test_new_earlier_task_wakes_the_loop(self):
+        ran = asyncio.Event()
+        async with scheduler_ctx() as scheduler:
+            _ = scheduler.schedule_task(
+                lambda: None,
+                None,
+                timezone.now() + datetime.timedelta(seconds=300),
+                name="late",
+            )
+            async with running(scheduler):
+                # the loop is now sleeping towards the +300s task
+                _ = scheduler.schedule_task(
+                    ran.set,
+                    None,
+                    timezone.now() + datetime.timedelta(milliseconds=50),
+                    name="soon",
+                )
+                await asyncio.wait_for(ran.wait(), 1)
 
-        # Mock the scheduler loop to avoid actual execution
-        _scheduler_loop = TaskScheduler._scheduler_loop
-        TaskScheduler._scheduler_loop = AsyncMock()
+    async def test_slow_task_does_not_block_others(self):
+        release = asyncio.Event()
+        quick_ran = asyncio.Event()
 
-        # Test starting
-        await scheduler.start()
-        assert scheduler._running is True
-        scheduler._scheduler_loop.assert_called_once()
+        async def slow():
+            await release.wait()  # only the quick task can release it
 
-        # Starting again should be no-op
-        scheduler._scheduler_loop.reset_mock()
-        await scheduler.start()
-        scheduler._scheduler_loop.assert_not_called()
+        async def quick():
+            quick_ran.set()
+            release.set()
 
-        # Test stopping
-        await scheduler.stop()
-        assert scheduler._running is False
-        scheduler.manager.close.assert_called_once()
+        async with scheduler_ctx() as scheduler:
+            soon = timezone.now() + datetime.timedelta(milliseconds=20)
+            _ = scheduler.schedule_task(slow, None, soon, name="slow")
+            _ = scheduler.schedule_task(
+                quick, None, soon + datetime.timedelta(milliseconds=100)
+            )
+            async with running(scheduler):
+                await asyncio.wait_for(quick_ran.wait(), 1)
 
-        TaskScheduler._scheduler_loop = _scheduler_loop
+    async def test_stop_wakes_the_loop_promptly(self):
+        async with scheduler_ctx() as scheduler:
+            _ = scheduler.schedule_task(
+                lambda: None,
+                None,
+                timezone.now() + datetime.timedelta(seconds=300),
+            )
+            run = asyncio.create_task(scheduler.start())
+            for _ in range(5):
+                await asyncio.sleep(0)
+            await scheduler.stop()
+            await asyncio.wait_for(run, 0.5)  # was: blocked in the sleep
+            assert scheduler._running is False
 
-    async def test_aclose(self, scheduler_with_mock_manager: TaskScheduler):
-        """Test aclose method (alias for stop)"""
-        scheduler = scheduler_with_mock_manager
-        _stop = TaskScheduler.stop
-        TaskScheduler.stop = AsyncMock()
+    async def test_scheduler_can_be_restarted(self):
+        calls: list[int] = []
+        removed = asyncio.Event()
 
-        await scheduler.aclose()
-        scheduler.stop.assert_called_once()
+        async def on_removed(_: str):
+            removed.set()
 
-        TaskScheduler.stop = _stop
+        async with scheduler_ctx() as scheduler:
+            async with running(scheduler):
+                pass
+            # restart: the old wake event / manager shutdown event are stale
+            _ = scheduler.schedule_task(
+                lambda: calls.append(1),
+                None,
+                timezone.now() + datetime.timedelta(milliseconds=30),
+                remove_callback=on_removed,
+            )
+            async with running(scheduler):
+                await asyncio.wait_for(removed.wait(), 1)
+                for _ in range(20):  # a due task must not be re-run
+                    await asyncio.sleep(0.001)
+            assert calls == [1]
+            assert scheduler.task_ids() == []
+
+    async def test_callable_returning_coroutine_is_awaited(self):
+        done = asyncio.Event()
+
+        async def real():
+            done.set()
+
+        async with scheduler_ctx() as scheduler:
+            task = Task(
+                id_="t",
+                func=lambda: real(),
+                cron=None,
+                next_run=timezone.now(),
+            )
+            await scheduler._execute_task(task)
+            assert done.is_set()
+
+    async def test_failed_reschedule_retires_the_task(self):
+        class BrokenCron:
+            next_run = timezone.now()
+
+            def update_after(self, _: datetime.datetime):
+                raise RuntimeError("no next run")
+
+        logs: list[str] = []
+        calls: list[int] = []
+        async with scheduler_ctx(log_exception=logs.append) as scheduler:
+            task = Task(
+                id_="broken",
+                func=lambda: calls.append(1),
+                cron=cast(cronjob.CronExpr, BrokenCron()),
+                next_run=timezone.now(),
+            )
+            scheduler._tasks["broken"] = task
+            async with running(scheduler):
+                await until(lambda: not scheduler.is_scheduled("broken"))
+                for _ in range(20):
+                    await asyncio.sleep(0.001)
+            assert calls == [1]  # was: re-run in a tight loop
+            assert any("Failed to reschedule" in log for log in logs)

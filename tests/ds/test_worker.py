@@ -1,4 +1,5 @@
 import asyncio
+import gc
 from itertools import repeat
 from types import SimpleNamespace
 from typing import Any, final
@@ -185,3 +186,163 @@ async def test_timeout():
         and len(result[1].args) == 2
         and result[1].args[1][0] is result[0]
     )
+
+
+# --- regressions ---------------------------------------------------------
+
+
+async def _never_cached(_: Any):
+    return None
+
+
+async def _discard(_: Any, __: Any):
+    return None
+
+
+async def test_timeout_of_one_requester_does_not_affect_the_other():
+    release = asyncio.Event()
+    calls = 0
+
+    async def worker(x: int):
+        nonlocal calls
+        calls += 1
+        await release.wait()
+        return x * 2
+
+    q = WorkerQueue(worker, _never_cached, _discard)
+    async with q:
+        timed_out = asyncio.create_task(asyncio.wait_for(q.require(1), 0.05))
+        await asyncio.sleep(0.01)
+        other = asyncio.create_task(q.require(1))
+        with pytest.raises(asyncio.TimeoutError):
+            await timed_out
+        release.set()
+        assert await other == 2  # was: CancelledError / InvalidStateError
+        assert calls == 1
+
+
+async def test_failed_item_is_retried_not_poisoned():
+    calls = 0
+
+    async def worker(x: str):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise ValueError("boom")
+        return x
+
+    async with WorkerQueue(worker, _never_cached, _discard) as q:
+        with pytest.raises(ValueError):
+            await q.require("a")
+        assert "a" not in q._ongoing
+        # was: the stale error was re-raised forever, worker never retried
+        assert await asyncio.wait_for(q.require("a"), 1) == "a"
+        assert await asyncio.wait_for(q.require("b"), 1) == "b"
+        assert calls == 3
+
+
+async def test_aclose_while_busy_leaves_queue_usable():
+    release = asyncio.Event()
+
+    async def worker(x: int):
+        await release.wait()
+        return x
+
+    q = WorkerQueue(worker, _never_cached, _discard, maxsize=2)
+    requests = [asyncio.create_task(q.require(i)) for i in range(2)]
+    await asyncio.sleep(0.01)
+    closing = asyncio.create_task(q.aclose())
+    await asyncio.sleep(0.01)
+    release.set()
+    await closing
+    assert await asyncio.gather(*requests) == [0, 1]
+    # was: the queue was padded with Nones, so this put blocked forever
+    assert q._worker_queue.qsize() == 0
+    assert await asyncio.wait_for(q.require(9), 1) == 9
+    assert q.running
+    await q.aclose()
+    assert not q.running
+
+
+async def test_shutdown_resolves_every_pending_future():
+    async def worker(x: str):
+        if x == "bad":
+            raise ValueError("bad")
+        return x
+
+    loop = asyncio.get_running_loop()
+    async with WorkerQueue(worker, _never_cached, _discard, maxsize=1) as q:
+        bad, good = loop.create_future(), loop.create_future()
+        q._ongoing["bad"], q._ongoing["good"] = bad, good
+        await q.aclose()  # was: bad's ValueError aborted the gather
+    assert good.result() == "good"
+    with pytest.raises(ValueError):
+        bad.result()
+    assert not q._ongoing
+
+
+async def test_cancelled_put_does_not_leave_state_behind():
+    release = asyncio.Event()
+    started = asyncio.Event()
+
+    async def worker(x: int):
+        started.set()
+        await release.wait()
+        return x
+
+    q = WorkerQueue(worker, _never_cached, _discard, maxsize=1)
+    async with q:
+        first = asyncio.create_task(q.require(1))
+        _ = await started.wait()  # the only consumer is busy
+        second = asyncio.create_task(q.require(2))  # fills the queue
+        await asyncio.sleep(0.01)
+        third = asyncio.create_task(q.require(3))  # blocked in put
+        await asyncio.sleep(0.01)
+        assert 3 in q._ongoing
+        _ = third.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await third
+        assert 3 not in q._ongoing  # was: stale future, retry hung
+        release.set()
+        assert await first == 1
+        assert await second == 2
+        assert await asyncio.wait_for(q.require(3), 1) == 3
+
+
+async def test_aclose_all_closes_everything():
+    async def worker(x: int):
+        return x
+
+    queues = [WorkerQueue(worker, _never_cached, _discard) for _ in range(3)]
+    for i, q in enumerate(queues):
+        _ = await q.require(i)
+    assert all(q.running for q in queues)
+    # was: RuntimeError, dictionary changed size during iteration
+    await WorkerQueue.aclose_all()
+    assert not any(q.running for q in queues)
+
+
+async def test_registry_does_not_keep_instances_alive():
+    async def worker(x: int):
+        return x
+
+    q = WorkerQueue(worker, _never_cached, _discard)
+    key = id(q)
+    assert key in WorkerQueue._global_registry
+    del q
+    _ = gc.collect()
+    assert key not in WorkerQueue._global_registry
+
+
+async def test_cache_set_failure_is_reported_on_close():
+    async def worker(x: int):
+        return x
+
+    async def broken_cache_set(_: Any, __: Any):
+        raise OSError("cache down")
+
+    q = WorkerQueue(worker, _never_cached, broken_cache_set)
+    assert await q.require(5) == 5  # the result is still delivered
+    with pytest.raises(ExceptionGroup) as info:
+        await q.aclose()
+    assert info.group_contains(OSError)
