@@ -5,7 +5,11 @@ from typing import ClassVar, cast, final, get_origin
 
 from .field_ import Field, FieldInfo, default_field_info
 from .utils.factory import factory
-from .utils.functions import disassemble_type
+from .utils.functions import (
+    disassemble_type,
+    get_class_annotations,
+    validate_alias,
+)
 from .utils.typedef import MISSING
 
 
@@ -73,20 +77,22 @@ class FieldsBuilder:
             info = default
         elif isinstance(default, dataclasses.Field) and self.dataclass_fields:
             info = self._field_from_dc(default)
+        alias = info.alias or self.alias_generator(key)
+        if info.init:
+            validate_alias(key, alias)
         field = info.build(
             self.field_class,
             name=key,
             annotation=disassemble_type(annotation),
-            alias=info.alias or self.alias_generator(key),
+            alias=alias,
+            kw_only=info.kw_only or self.kw_only,
         )
         self.fields.append(field)
         self.field_names.add(field.name)
         return self
 
     def from_annotations(self):
-        if not hasattr(self.cls, "__annotations__"):
-            return self
-        for key, val in self.cls.__annotations__.items():
+        for key, val in get_class_annotations(self.cls).items():
             if get_origin(val) is not ClassVar:
                 _ = self.add_field(key, val)
         return self
@@ -114,9 +120,9 @@ def _validate_fields_order(fields: Collection[Field]):
     had_default = False
     last_default_field = ""
     for field in fields:
-        if field.kw_only:
+        if field.kw_only or not field.init:
             continue
-        if had_default and field.default is MISSING and field.ref is None:
+        if had_default and field.default is MISSING:
             raise ValueError(
                 f"Non default field {field.name!r}"
                 + " after field with default"

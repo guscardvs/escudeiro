@@ -10,7 +10,6 @@ from typing import (
     ForwardRef,
     Literal,
     TypeVar,
-    cast,
     overload,
 )
 
@@ -20,6 +19,7 @@ from .field_ import Field
 from .main import build_cls, get_parse_dict, get_squire_serialize
 from .utils.functions import (
     disassemble_type,
+    evaluate_ref,
     get_forwardrefs,
     rebuild_type_from_depth,
 )
@@ -176,16 +176,18 @@ def update_ref(cls: type):
         if not frefs:
             continue
         for forwardref in frefs:
-            resolved = cast(ForwardRef, forwardref.type_)._evaluate(
-                mod_globalns, mod_globalns, recursive_guard=frozenset()
-            )
+            ref: ForwardRef = forwardref.type_
+            # a locals dict distinct from the globals disables the value
+            # ForwardRef caches (typing shares `Optional["Node"]` across
+            # modules before 3.14, so a cached "Node" can be another class)
+            resolved = evaluate_ref(ref, mod_globalns, {})
             if not resolved:
                 raise TypeError(
                     f"Unable to resolve ForwardRef for {cls.__qualname__}.{field.name}"
                 )
             forwardref.type_ = resolved
         updated_fields[field.name] = field.duplicate(
-            type_=disassemble_type(rebuild_type_from_depth(field.node))
+            annotation=disassemble_type(rebuild_type_from_depth(field.node))
         )
     if not updated_fields:
         return
@@ -226,7 +228,7 @@ def resolve_typevars(*vars: tuple[TypeVar, str | type]):
                 if typevar.type_ in varsdict:
                     typevar.type_ = varsdict[typevar.type_]
             updated_fields[f.name] = f.duplicate(
-                type_=disassemble_type(rebuild_type_from_depth(f.node))
+                annotation=disassemble_type(rebuild_type_from_depth(f.node))
             )
         fields_map.update(updated_fields)
         return build_cls(cls.__source__, fields_map, **cls.__build_opts__)

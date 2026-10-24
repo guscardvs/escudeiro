@@ -1,13 +1,30 @@
 from collections.abc import Hashable
 from types import GenericAlias, UnionType
-from typing import Annotated, Any, TypeAliasType, cast, get_args, get_origin
+from typing import (
+    Annotated,
+    Any,
+    ForwardRef,
+    Literal,
+    TypeAliasType,
+    TypeVar,
+    Union,  # pyright:ignore[reportDeprecated]
+    cast,
+    get_args,
+    get_origin,
+)
 
 from typing_extensions import TypeIs
 
 from escudeiro.misc.iterx import flatten
 
 
-def is_hashable(annotation: Any) -> TypeIs[Hashable]:
+def is_hashable(
+    annotation: Any, *, unresolved_ok: bool = False
+) -> TypeIs[Hashable]:
+    """Whether values of `annotation` can be hashed.
+
+    `unresolved_ok` treats a ForwardRef/TypeVar (whose real type is not
+    known yet) as hashable instead of unhashable."""
     if isinstance(annotation, TypeAliasType):
         annotation = annotation.__value__
 
@@ -25,10 +42,16 @@ def is_hashable(annotation: Any) -> TypeIs[Hashable]:
             continue
 
         if origin := get_origin(current):
-            if isinstance(current, GenericAlias | UnionType):
-                stack.extend(flatten((origin, *get_args(current))))
-            elif origin is Annotated:  # pyright: ignore[reportUnnecessaryComparison]
+            if origin is Annotated:  # pyright: ignore[reportUnnecessaryComparison]
                 stack.extend(flatten((get_args(current)[0],)))
+            elif origin is Literal:
+                pass
+            elif origin in (Union, UnionType):  # pyright: ignore[reportDeprecated]
+                stack.extend(flatten(get_args(current)))
+            else:
+                stack.extend(flatten((origin, *get_args(current))))
+        elif unresolved_ok and isinstance(current, ForwardRef | TypeVar | str):
+            pass
         elif current not in (Ellipsis, None) and (
             not isinstance(current, type) or not issubclass(current, Hashable)
         ):

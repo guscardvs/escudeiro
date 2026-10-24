@@ -175,7 +175,7 @@ class Schema:
 
     def build_required(self) -> str:
         return (
-            f""""required": [{",".join(f'"{val}"' for val in self.required)}]"""
+            f""""required": [{",".join(f'"{to_camel(val)}"' for val in self.required)}]"""
             if self.required
             else ""
         )
