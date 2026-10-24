@@ -4,7 +4,13 @@ import threading
 
 from escudeiro.context.interfaces import Adapter, AsyncAdapter
 from escudeiro.data import data
-from escudeiro.lazyfields import asynclazyfield, dellazy, lazyfield, mark_class
+from escudeiro.lazyfields import (
+    asynclazyfield,
+    dellazy,
+    is_initialized,
+    lazyfield,
+    mark_class,
+)
 
 
 @mark_class(threading.RLock)
@@ -39,7 +45,9 @@ class Context[T]:
         Acquires a new resource from the adapter and increases the stack count.
         """
         with self._lock:
-            if self.adapter.is_closed(self.client):
+            if is_initialized(self, "client") and self.adapter.is_closed(
+                self.client
+            ):
                 dellazy(self, type(self).client)
             self.stack += 1
             return self.client
@@ -49,11 +57,11 @@ class Context[T]:
         Releases the current resource if the stack count is 1,
         and decreases the stack count.
         """
-        if self.stack == 1:
-            with self._lock:
+        with self._lock:
+            if self.stack == 1:
                 self.adapter.release(self.client)
                 dellazy(self, type(self).client)
-        self.stack -= 1
+            self.stack -= 1
 
     @contextlib.contextmanager
     def open(self):

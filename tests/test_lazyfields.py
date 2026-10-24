@@ -21,6 +21,8 @@ from escudeiro.lazyfields import (
     LazyContainer,
     LazyField,
     asynclazyfield,
+    dellazy,
+    is_initialized,
     lazyfield,
     mark_class,
 )
@@ -777,3 +779,76 @@ class TestComplexUseCases:
         assert result == "second-first"
         assert first_mock.await_count == 1
         assert second_mock.call_count == 1
+
+
+def test_is_initialized_follows_dellazy():
+    class Sample:
+        @lazyfield
+        def field(self):
+            return 1
+
+    sample = Sample()
+    assert not is_initialized(sample, "field")
+    assert sample.field == 1
+    assert is_initialized(sample, "field")
+    dellazy(sample, Sample.field)
+    assert not is_initialized(sample, "field")
+    assert sample.field == 1
+    assert is_initialized(sample, "field")
+
+
+async def test_is_initialized_follows_dellazy_for_async_fields():
+    class Sample:
+        @asynclazyfield
+        async def field(self):
+            return 1
+
+    sample = Sample()
+    assert not is_initialized(sample, "field")
+    assert await sample.field() == 1
+    assert is_initialized(sample, "field")
+    await dellazy(sample, Sample.field)
+    assert not is_initialized(sample, "field")
+
+
+async def test_asynclazyfield_reset_can_store_none():
+    calls = 0
+
+    class Sample:
+        @asynclazyfield
+        async def field(self):
+            nonlocal calls
+            calls += 1
+            return "computed"
+
+    sample = Sample()
+    assert await sample.field() == "computed"
+    await Sample.field.reset(sample, None)
+    assert await sample.field() is None
+    assert calls == 1
+    await Sample.field.reset(sample)
+    assert await sample.field() == "computed"
+    assert calls == 2
+
+
+def test_marked_subclass_with_regenerated_init_gets_lock_lazily():
+    @mark_class(threading.RLock)
+    class Base:
+        @lazyfield
+        def field(self):
+            return object()
+
+    class Child(Base):
+        def __init__(self) -> None:  # does not call Base.__init__
+            pass
+
+    child = Child()
+    assert not hasattr(child, "_lazyfield_sync_ctx_")
+    _ = child.field
+    lock = child._lazyfield_sync_ctx_  # pyright: ignore[reportAttributeAccessIssue]
+    assert isinstance(lock, type(threading.RLock()))
+    _ = child.field
+    assert child._lazyfield_sync_ctx_ is lock  # pyright: ignore[reportAttributeAccessIssue]
+    other = Child()
+    _ = other.field
+    assert other._lazyfield_sync_ctx_ is not lock  # pyright: ignore[reportAttributeAccessIssue]

@@ -18,6 +18,7 @@ github = "https://github.com/guscardvs/escudeiro"
 [project.optional-dependencies]
 pydantic = ["pydantic (>=2.0.0, <3.0.0)"]
 msgspec = ["msgspec (>=0.19.0, <1.0.0)"]
+sqlalchemy = ["sqlalchemy[asyncio] (>=2.0.0, <3.0.0)"]
 
 [tool.ruff]
 line-length = 80
@@ -78,6 +79,7 @@ build-backend = "maturin"
 
 [dependency-groups]
 dev = [
+    "aiosqlite>=0.21.0",
     "attrs>=25.3.0",
     "basedpyright>=1.29.4",
     "hypothesis>=6.135.7",

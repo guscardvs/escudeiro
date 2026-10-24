@@ -7,7 +7,7 @@ from escudeiro.context.interfaces import (
     AtomicAsyncAdapter,
 )
 from escudeiro.data import data
-from escudeiro.lazyfields import dellazy, lazyfield
+from escudeiro.lazyfields import dellazy, is_initialized, lazyfield
 
 
 @data(frozen=False)
@@ -24,24 +24,33 @@ class AtomicContext[T](Context[T]):
     @override
     def acquire(self) -> T:
         with self._lock:
-            if self.adapter.is_closed(self.client):
+            if is_initialized(self, "client") and self.adapter.is_closed(
+                self.client
+            ):
                 dellazy(self, type(self).client)
+            client = self.client
+            if self.stack == 0:
+                self.adapter.begin(client)
             self.stack += 1
-            self.adapter.begin(self.client)
-        return self.client
+        return client
 
     @override
     def release(self, commit: bool = True):
         with self._lock:
-            if self.stack == 1:
-                if self.adapter.in_atomic(self.client):
-                    if commit:
-                        self.adapter.commit(self.client)
-                    else:
-                        self.adapter.rollback(self.client)
-                self.adapter.release(self.client)
-                dellazy(self, type(self).client)
-            self.stack -= 1
+            try:
+                if self.stack == 1:
+                    client = self.client
+                    try:
+                        if self.adapter.in_atomic(client):
+                            if commit:
+                                self.adapter.commit(client)
+                            else:
+                                self.adapter.rollback(client)
+                    finally:
+                        self.adapter.release(client)
+                        dellazy(self, type(self).client)
+            finally:
+                self.stack -= 1
 
     @override
     def __exit__(
@@ -74,16 +83,20 @@ class AsyncAtomicContext[T](AsyncContext[T]):
     @override
     async def release(self, commit: bool = True):
         async with self.lock:
-            client = await self.client()
-            if self.stack == 1:
-                if await self.adapter.in_atomic(client):
-                    if commit:
-                        await self.adapter.commit(client)
-                    else:
-                        await self.adapter.rollback(client)
-                await self.adapter.release(client)
-                await dellazy(self, type(self).client)
-            self.stack -= 1
+            try:
+                if self.stack == 1:
+                    client = await self.client()
+                    try:
+                        if await self.adapter.in_atomic(client):
+                            if commit:
+                                await self.adapter.commit(client)
+                            else:
+                                await self.adapter.rollback(client)
+                    finally:
+                        await self.adapter.release(client)
+                        await dellazy(self, type(self).client)
+            finally:
+                self.stack -= 1
 
     @override
     async def __aexit__(
