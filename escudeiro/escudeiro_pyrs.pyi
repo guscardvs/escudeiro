@@ -4,7 +4,7 @@ import enum
 from collections.abc import Collection, Mapping
 from datetime import datetime, tzinfo
 from pathlib import Path
-from typing import Any, ClassVar, Literal, Self
+from typing import Any, ClassVar, Literal, Self, override
 
 class url:
     """A collection of URL parsing and manipulation utilities."""
@@ -242,29 +242,45 @@ class strings:
 
     @staticmethod
     def replace_all(value: str, replacements: Mapping[str, str]) -> str:
-        """Replace all occurrences of keys with their values in the string."""
+        """Replace every key with its value in a single left-to-right pass.
+
+        At each position the longest matching key wins and replaced text is
+        never rescanned, so the result does not depend on mapping order
+        (`{"a": "b", "b": "c"}` turns `"ab"` into `"bc"`). Empty keys are ignored.
+        """
 
     @staticmethod
     def replace_by(
         value: str, replacement: str, to_replace: Collection[str]
     ) -> str:
-        """Replace all occurrences of any string in to_replace with replacement."""
+        """Replace every occurrence of any string in to_replace with replacement (single pass, longest match first)."""
 
     @staticmethod
     def to_snake(value: str) -> str:
-        """Convert string to snake_case."""
+        """Convert string to snake_case.
+
+        Words split on `_`, `-`, whitespace, lower/digit -> upper boundaries and
+        the end of an acronym run: `HTTPServer` -> `http_server`,
+        `getHTTPResponse` -> `get_http_response`, `var1Name` -> `var1_name`,
+        `OAuth2Client` -> `o_auth2_client`. Digits stay with the word before
+        them. Leading and trailing underscores are preserved (`__init__`).
+        """
 
     @staticmethod
     def to_camel(value: str) -> str:
-        """Convert string to camelCase."""
+        """Convert string to camelCase (same word rules as `to_snake`; `item_2_name` -> `item2Name`, `_private` -> `_private`, `__init__` -> `__init__`). Trailing underscores of a plain name (`type_`, the keyword-escape convention) are dropped: `type_` -> `type`."""
 
     @staticmethod
     def to_pascal(value: str) -> str:
-        """Convert string to PascalCase."""
+        """Convert string to PascalCase (same word rules as `to_snake`; `_private` -> `_Private`). Trailing underscores of a plain name are dropped: `type_` -> `Type`."""
 
     @staticmethod
     def to_kebab(value: str, remove_trailing_underscores: bool = True) -> str:
-        """Convert string to kebab-case."""
+        """Convert string to kebab-case (same word rules as `to_snake`).
+
+        Leading underscores are preserved; trailing ones are dropped when
+        `remove_trailing_underscores` is true and preserved otherwise.
+        """
 
     @staticmethod
     def squote(value: str) -> str:
@@ -276,15 +292,15 @@ class strings:
 
     @staticmethod
     def sentence(value: str) -> str:
-        """Capitalize first letter and add period if missing."""
+        """Add a period unless the value already ends with `.`, `?` or `!`; an empty string stays empty."""
 
     @staticmethod
     def exclamation(value: str) -> str:
-        """Capitalize first letter and add exclamation if missing."""
+        """Replace any trailing `.`, `?` or `!` with a single `!`."""
 
     @staticmethod
     def question(value: str) -> str:
-        """Capitalize first letter and add question mark if missing."""
+        """Replace any trailing `.`, `?` or `!` with a single `?`."""
 
 class squire:
     """Serialization and deserialization utilities."""
@@ -295,13 +311,25 @@ class squire:
 
     @staticmethod
     def deserialize_mapping(
-        mapping: Mapping[str, Any], by_alias: bool = True
+        mapping: Mapping[str, Any], by_alias: bool | None = None
     ) -> Mapping[str, Any]:
-        """Deserialize a mapping with optional alias resolution."""
+        """Deserialize a mapping (`by_alias` defaults to False).
+
+        Raises:
+            RecursionError: If nesting is deeper than 500 containers.
+            ValueError: If the mapping contains itself.
+        """
 
     @staticmethod
-    def deserialize(value: Any, by_alias: bool = True) -> Any:
-        """Generic deserialization with optional alias resolution."""
+    def deserialize(value: Any, by_alias: bool = False) -> Any:
+        """Convert data classes, lists, tuples, sets and dicts into builtin containers.
+
+        A set whose converted items are unhashable (for example dicts) becomes a list.
+
+        Raises:
+            RecursionError: If nesting is deeper than 500 containers.
+            ValueError: If a container (transitively) contains itself.
+        """
 
 class cronjob:
     """Cron expression utilities."""
@@ -310,23 +338,50 @@ class cronjob:
         """Represents and evaluates cron expressions."""
 
         @property
-        def timezone(self) -> tzinfo:
-            """Get the timezone used for scheduling."""
+        def timezone(self) -> tzinfo | str:
+            """The timezone object that was passed to the constructor."""
 
         @property
         def next_run(self) -> datetime:
             """Get the next scheduled run time."""
 
-        def __init__(self, expression: str, timezone: tzinfo) -> None:
-            """Initialize with a cron expression and timezone."""
+        def __init__(
+            self, expression: str, timezone: tzinfo | str
+        ) -> None:
+            """Initialize with a cron expression and the timezone it is evaluated in.
+
+            Args:
+                expression: Standard 5-field crontab (minute hour day-of-month
+                    month day-of-week). Weekdays: 0 and 7 are Sunday, 1 is
+                    Monday ... 6 is Saturday, or SUN..SAT.
+                timezone: A `zoneinfo.ZoneInfo` (or IANA name string) follows
+                    DST; a fixed-offset tzinfo such as `datetime.timezone`
+                    does not.
+
+            Raises:
+                ValueError: Invalid expression (including a field count other
+                    than 5) or unknown zone name.
+                TypeError: `timezone` is none of the accepted types.
+            """
 
         def update(self) -> None:
             """Update next_run to the next scheduled occurrence."""
+
         def update_after(self, after: datetime) -> None:
-            """Update next_run to the next scheduled occurrence after 'after'."""
+            """Set next_run to the first occurrence strictly after `after`.
+
+            `after` is converted to the cron timezone before the cron fields
+            are evaluated, so any aware datetime can be passed.
+            """
 
         def matches(self, value: datetime) -> bool:
-            """Check if the given datetime matches the cron schedule."""
+            """Check if the minute of `value` is scheduled (seconds are ignored).
+
+            `value` is converted to the cron timezone first.
+            """
+
+        def upcoming_runs(self, n: int) -> list[datetime]:
+            """Get the next `n` scheduled runs after the current time."""
 
 class filetree:
     """
@@ -477,15 +532,27 @@ class filetree:
             """
             ...
 
+        @override
+        def __eq__(self, other: object) -> bool:
+            """Two nodes are equal when they are the same underlying node."""
+            ...
+
+        @override
+        def __hash__(self) -> int: ...
+
         def add_child(self, node: filetree.FsNode) -> None:
             """
             Add a child node to this directory.
 
             Args:
-                node: The node to add as a child
+                node: The node to add as a child. Its name must be a single
+                    path component: not empty, `.` or `..`, and without `/`,
+                    `\\` or NUL.
 
             Raises:
-                ValueError: If this node is a file, or if the lock cannot be acquired
+                ValueError: If this node is a file, the name is invalid, a child
+                    with the same name exists, adding the node would create a
+                    cycle, or the lock cannot be acquired
             """
             ...
 
@@ -497,7 +564,7 @@ class filetree:
                 content: the content to be written in bytes
 
             Raises:
-                ValueError: if this node is a directory, or if the lock cannot be acquired.
+                ValueError: if this node is a directory (empty or not), or if the lock cannot be acquired.
             """
             ...
 

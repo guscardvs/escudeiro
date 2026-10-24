@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 import pytest
@@ -76,27 +77,120 @@ def test_filetree_merge(tmp_path: Path):
     assert (tmp_path / "root1/root2/other.txt").exists()
 
 
-def test_filetree_overwrites_file_with_dir(tmp_path: Path):
+def test_write_never_replaces_a_file_with_a_dir(tmp_path: Path):
     file_path = tmp_path / "root" / "conflict"
     file_path.parent.mkdir(parents=True)
     _ = file_path.write_text("was a file")
 
     tree = FileTree(base_dir=tmp_path / "root")
     _ = tree.virtual.create_dir("conflict")
-    tree.write()
+    with pytest.raises(InvalidPath, match="conflict"):
+        tree.write()
 
-    assert not file_path.is_file()
+    assert file_path.read_text() == "was a file"
 
 
-def test_filetree_overwrites_dir_with_file(tmp_path: Path):
+def test_write_never_replaces_a_dir_with_a_file(tmp_path: Path):
     dir_path = tmp_path / "root" / "conflict"
     dir_path.mkdir(parents=True)
 
     tree = FileTree(base_dir=tmp_path / "root")
     _ = tree.virtual.create_text_file("conflict", content="now a file")
+    with pytest.raises(InvalidPath, match="conflict"):
+        tree.write()
+
+    assert dir_path.is_dir()
+
+
+def test_write_keeps_a_precious_file_that_blocks_a_folder(tmp_path: Path):
+    base = tmp_path / "root"
+    base.mkdir()
+    precious = base / "sub"
+    _ = precious.write_text("precious")
+
+    tree = FileTree(base_dir=base)
+    _ = tree.virtual.create_text_file("f.txt", "sub", content="x")
+    with pytest.raises(InvalidPath):
+        tree.write()
+
+    assert precious.read_text() == "precious"
+
+
+def test_write_is_all_or_nothing_on_conflict(tmp_path: Path):
+    base = tmp_path / "root"
+    (base / "d").mkdir(parents=True)
+    _ = (base / "d" / "keep.txt").write_text("keep")
+
+    tree = FileTree(base_dir=base)
+    _ = tree.virtual.create_text_file("a.txt", content="a")
+    _ = tree.virtual.create_text_file("d", content="file over non-empty dir")
+    with pytest.raises(InvalidPath):
+        tree.write()
+
+    assert not (base / "a.txt").exists()
+    assert (base / "d" / "keep.txt").read_text() == "keep"
+
+
+def test_write_replaces_file_content_atomically(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    base = tmp_path / "root"
+    base.mkdir()
+    target = base / "f.txt"
+    _ = target.write_text("old")
+    target.chmod(0o640)
+
+    tree = FileTree(base_dir=base)
+    _ = tree.virtual.create_text_file("f.txt", content="new")
+    tree.write()
+    assert target.read_text() == "new"
+    assert target.stat().st_mode & 0o777 == 0o640
+    assert [p.name for p in base.iterdir()] == ["f.txt"]
+
+    def failing_replace(src: object, dst: object) -> None:
+        raise OSError("boom")
+
+    _ = tree.virtual.create_text_file("f.txt", content="newer")
+    monkeypatch.setattr(os, "replace", failing_replace)
+    with pytest.raises(OSError, match="boom"):
+        tree.write()
+    assert target.read_text() == "new"
+    assert [p.name for p in base.iterdir()] == ["f.txt"]  # no temp left over
+
+
+def test_write_refuses_names_that_escape_base_dir(tmp_path: Path):
+    tree = FileTree(base_dir=tmp_path / "root")
+    for name in ("../escaped.txt", "a/b.txt"):
+        with pytest.raises(InvalidPath):
+            _ = tree.virtual.create_text_file(name, content="x")
+    tree.write()
+    assert not (tmp_path / "escaped.txt").exists()
+
+
+def test_validate_and_write_nested_path_with_missing_base_dir(tmp_path: Path):
+    base = tmp_path / "new" / "project"  # neither level exists yet
+    tree = FileTree(base_dir=base)
+    _ = tree.virtual.create_text_file("inner.txt", "pkg", "sub", content="x")
+
+    tree.validate()  # used to raise a false FailedFileOperation
     tree.write()
 
-    assert dir_path.is_file()
+    assert (base / "pkg" / "sub" / "inner.txt").read_text() == "x"
+
+
+def test_validate_reports_unwritable_ancestor(tmp_path: Path):
+    if os.geteuid() == 0:
+        pytest.skip("root bypasses permission checks")
+    locked = tmp_path / "locked"
+    locked.mkdir()
+    locked.chmod(0o500)
+    try:
+        tree = FileTree(base_dir=locked / "a" / "b")
+        _ = tree.virtual.create_text_file("f.txt", content="x")
+        with pytest.raises(FailedFileOperation, match="locked"):
+            tree.validate()
+    finally:
+        locked.chmod(0o700)
 
 
 def test_filetree_deep_nesting(tmp_path: Path):

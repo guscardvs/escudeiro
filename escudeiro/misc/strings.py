@@ -33,7 +33,7 @@ def to_kebab(value: str, remove_trailing_underscores: bool = True) -> str:
 
 
 def sentence(value: str) -> str:
-    """Formats a string as a sentence, ensuring proper capitalization and punctuation."""
+    """Ends a string with a period unless it already ends with ".", "?" or "!"."""
     return strings.sentence(value)
 
 

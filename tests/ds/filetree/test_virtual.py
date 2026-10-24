@@ -174,3 +174,65 @@ def test_virtual_context_exception():  # sourcery skip: raise-specific-error
             raise Exception("Something went wrong")
 
     assert file_tree.root.children == []
+
+
+def test_virtual_context_on_existing_non_empty_folder():
+    file_tree = VirtualFileTree.from_basename("root")
+    with file_tree.virtual_context("folder") as inner_tree:
+        _ = inner_tree.create_text_file("one.txt", content="1")
+
+    # used to raise InvalidPath: Conflict (the folder's children vs themselves)
+    with file_tree.virtual_context("folder") as inner_tree:
+        _ = inner_tree.create_text_file("two.txt", content="2")
+
+    assert asdict(file_tree) == {
+        "root": {"folder": {"one.txt": b"1", "two.txt": b"2"}}
+    }
+
+
+def test_virtual_context_on_existing_nested_folder():
+    file_tree = VirtualFileTree.from_basename("root")
+    _ = file_tree.create_text_file("one.txt", "a", "b", content="1")
+    with file_tree.virtual_context("b", "a") as inner_tree:
+        _ = inner_tree.create_text_file("two.txt", content="2")
+    assert asdict(file_tree) == {
+        "root": {"a": {"b": {"one.txt": b"1", "two.txt": b"2"}}}
+    }
+
+
+def test_virtual_context_wraps_assertion_errors():
+    # no test-environment special case: AssertionError is wrapped like any error
+    file_tree = VirtualFileTree.from_basename("root")
+    with pytest.raises(FailedFileOperation):
+        with file_tree.virtual_context("folder"):
+            raise AssertionError("nope")
+
+
+def test_merge_skips_identical_shared_nodes():
+    file_tree = VirtualFileTree.from_basename("root")
+    _ = file_tree.create_text_file("one.txt", "folder", content="1")
+    shared = file_tree.get_path("folder")
+    file_tree.merge(VirtualFileTree(shared))
+    assert asdict(file_tree) == {"root": {"folder": {"one.txt": b"1"}}}
+
+
+def test_merge_conflict_is_all_or_nothing():
+    target = VirtualFileTree.from_basename("root")
+    _ = target.create_text_file("same.txt", "dir", content="old")
+
+    source = VirtualFileTree.from_basename("dir")
+    _ = source.create_text_file("new.txt", content="new")
+    _ = source.create_text_file("same.txt", content="clash")
+
+    with pytest.raises(InvalidPath, match="same.txt"):
+        target.merge(source)
+    assert asdict(target) == {"root": {"dir": {"same.txt": b"old"}}}
+
+
+def test_invalid_names_raise_typed_errors():
+    file_tree = VirtualFileTree.from_basename("root")
+    with pytest.raises(InvalidPath):
+        _ = file_tree.create_file("../escaped.txt")
+    with pytest.raises(InvalidPath):
+        _ = file_tree.create_dir("a/b")
+    assert file_tree.root.children == []

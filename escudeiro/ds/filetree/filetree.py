@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import os
+import shutil
+import uuid
 from pathlib import Path
 from types import TracebackType
 from typing import Self
@@ -25,6 +27,14 @@ class FileTree:
         return VirtualFileTree(self.root)
 
     def write(self):
+        """Write the tree under `base_dir`.
+
+        The whole tree is validated first, so a conflict (a file where a folder
+        is expected or the other way around) raises `InvalidPath` before
+        anything is touched. Existing files are never removed; their content is
+        replaced atomically (temp file + rename).
+        """
+        self.validate()
         self.write_tree(self.base_dir, self.root)
 
     def __enter__(self) -> Self:
@@ -61,21 +71,30 @@ class FileTree:
                     stack.append((curpath / node.name, node))
 
     def _write_file(self, path: Path, node: filetree.FsNode):
-        if node.content is None:
+        content = node.content
+        if content is None:
             raise ValueError(f"Expected file node, got folder at {path}")
-        if path.exists() and path.is_dir():
-            path.rmdir()
-        elif path.exists() and path.is_file():
-            path.unlink(missing_ok=True)
-        else:
-            path.touch()
-        with open(path, "wb") as stream:
-            _ = stream.write(node.content)
+        if path.exists() and not path.is_file():
+            raise InvalidPath(
+                f"Expected file at {path}, but found directory or other"
+            )
+        tmp = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+        try:
+            with open(tmp, "xb") as stream:
+                _ = stream.write(content)
+            if path.exists():
+                shutil.copymode(path, tmp)
+            _ = os.replace(tmp, path)
+        except BaseException:
+            tmp.unlink(missing_ok=True)
+            raise
 
     def _write_folder(self, path: Path):
         if path.exists():
-            if path.is_file():
-                path.unlink(missing_ok=True)
+            if not path.is_dir():
+                raise InvalidPath(
+                    f"Expected folder at {path}, but found file or other"
+                )
         else:
             path.mkdir(parents=True)
 
@@ -116,16 +135,18 @@ class FileTree:
                 for child in curnode.children:
                     stack.append((curpath / child.name, child))
 
-            # Optional: verify write permission
+            # Verify write permission on the path, or on the nearest folder
+            # that exists (the missing parents will be created below it)
             if curpath.exists():
                 if not os.access(curpath, os.W_OK):
                     raise FailedFileOperation(
                         f"No write permission for {curpath}"
                     )
             else:
-                # Check parent directory for writability
-                parent = curpath.parent
-                if not parent.exists() or not os.access(parent, os.W_OK):
+                ancestor = curpath.parent
+                while not ancestor.exists() and ancestor != ancestor.parent:
+                    ancestor = ancestor.parent
+                if not os.access(ancestor, os.W_OK | os.X_OK):
                     raise FailedFileOperation(
-                        f"Cannot write to {parent} (nonexistent or unwritable)"
+                        f"Cannot write to {ancestor} (unwritable)"
                     )
