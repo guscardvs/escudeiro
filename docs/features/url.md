@@ -118,18 +118,33 @@ url = URL("https://www.example.com/path?key1=value1").add(
 
 ---
 
-## Immutability and Copying
+## In-place and Copying APIs
 
-All operations on `URL` objects return new instances. You can safely copy and compare URLs:
+`URL` offers two styles. The in-place methods (`add`, `set`, and the same
+methods on `Query`, `Path`, `Netloc` and `Fragment`) modify the object and
+return it, so they chain. The `copy_*` variants and `copy()` leave the
+original untouched.
 
 ```python
-url = URL("https://www.example.com/path?key1=value1").add(
-    query={"key2": "value2", "key3": "value3"}
-)
-url2 = url.copy()
-assert url2 is not url
-assert url2 == url
+url = URL("https://www.example.com/path?key1=value1")
+url.add(query={"key2": "value2"})           # modifies `url`
+url.query.add(key3="value3")                # parts are live: also modifies `url`
+
+other = url.copy_add(path="more")           # `url` is unchanged
+copy = url.copy()
+assert copy is not url and copy == url
+copy.path.add("x")                          # does not affect `url`
 ```
+
+Parts returned by `.query`, `.path`, `.netloc` and `.fragment` are live views
+of the URL. Assigning a part (`url.query = other_query`) stores a copy, so two
+URLs never share a part. `URL` and its parts are mutable and therefore not
+hashable.
+
+Relative references (`/a/b?c=1`, `?a=1`, `//host/x`) and opaque URLs such as
+`mailto:a@b.com` are accepted and round-trip through `encode()`; invalid input
+(for example a bad port or host) raises `ValueError`. Query parameters keep
+their insertion order.
 
 ---
 
@@ -140,7 +155,8 @@ assert url2 == url
 - **Construction:** `URL(str_or_url)`
 - **Properties:** `.scheme`, `.netloc`, `.path`, `.query`, `.fragment`
 - **Methods:**
-    - `.add(...)`: Return a new URL with updated components (`path`, `query`, `fragment`, `netloc`, `netloc_obj`)
+    - `.add(...)` / `.set(...)`: Update components in place (`path`, `query`, `fragment`, `netloc`, `netloc_obj`, `scheme`) and return the same URL
+    - `.copy_add(...)` / `.copy_set(...)`: Same, on a copy; the original is unchanged
     - `.copy()`: Return a new identical URL instance
     - `.encode()`: Return the URL as a string
     - `.from_args(...)` Return a new URL from the args received. Shortcut to `URL("").set(...)`
@@ -154,7 +170,7 @@ assert url2 == url
 
 ## Notes
 
-- All modifications are immutable and chainable.
+- In-place modifications are chainable; use `copy_add`/`copy_set` to keep the original.
 - Query parameters can be provided as dicts or strings.
 - Use `netloc_obj` for advanced netloc construction (user, password, port).
 - The API is type-safe and works well with dataclasses.

@@ -119,7 +119,11 @@ Container for cron scheduling info.
 
 - **Attributes:**
   - `cronexpr`: Cron expression string
-  - `timezone`: Timezone (defaults to local)
+  - `timezone`: Timezone (defaults to UTC). Accepts a `datetime.timezone`, a
+    `zoneinfo.ZoneInfo` (DST-aware) or an IANA name such as `"America/Sao_Paulo"`.
+  - `cronexpr` uses the standard 5 fields (`minute hour day-of-month month
+    day-of-week`). Weekdays follow crontab: `0` and `7` are Sunday, `1` is
+    Monday, `6` is Saturday (names `SUN`..`SAT` also work).
 
 #### `TaskScheduler`
 
@@ -128,6 +132,7 @@ Main scheduler class.
 - **Attributes:**
   - `default_sleep_interval`: Sleep time when idle
   - `log_info`, `log_warning`, `log_exception`: Logging callbacks
+  - `clock`: Callable returning the current aware time (injectable, useful in tests)
 
 - **Methods:**
   - `schedule_task(func, cron_expr, run_at, ...)`: Schedule a new task
@@ -137,7 +142,7 @@ Main scheduler class.
   - `remove_task(task_id, callback)`: Remove a task by ID
   - `remove_by_name(name, callback)`: Remove task(s) by name
   - `start()`: Start the scheduler loop
-  - `stop()`: Stop the scheduler
+  - `stop()`: Stop the scheduler (wakes the loop immediately; `start()` can be called again afterwards)
   - `aclose()`: Async cleanup (alias for `stop()`)
 
 ---
