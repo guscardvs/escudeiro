@@ -4,7 +4,7 @@ import asyncio
 import contextlib
 import inspect
 from collections.abc import AsyncIterable, Callable
-from datetime import UTC, date, datetime, time
+from datetime import UTC, date, datetime, time, timedelta, timezone
 from decimal import Decimal
 from functools import partial
 from typing import Any, NoReturn, Self
@@ -825,8 +825,9 @@ class TestRetryAMap:
         # Set retry count to 3 for this test
         retry = Retry(signal=ValueError, count=3)
 
+        # one skipped item per unit of the budget (count), then it aborts
         with pytest.raises(ErrorGroup) as exc_info:
-            async for _ in retry.amap(failing_process, [42]):
+            async for _ in retry.amap(failing_process, [42] * 4):
                 pass
         # Assert that one of the error messages indicates that max retries were exceeded.
         error_messages = [str(e) for e in exc_info.value.exceptions]
@@ -928,15 +929,14 @@ class TestRetryAgenMap:
             return item * 2
 
         async def generator():
-            for i in [1, 2, 3]:
+            for i in [1, 2, 2, 2, 3]:
                 yield i
 
         retry = Retry(signal=ValueError, count=2)
 
+        # two failing items are skipped (count=2); the third one aborts
         with pytest.raises(ErrorGroup):
-            results = []
-            async for result in retry.agenmap(process, generator()):
-                results.append(result)
+            _ = [x async for x in retry.agenmap(process, generator())]
 
     async def test_agenmap_temperature_strategy(self):
         """Test agenmap with temperature strategy that reduces retry count after success."""
@@ -1451,3 +1451,151 @@ class TestAWrapResultWith:
         assert process_with_class.__annotations__["return"] is Decimal, (
             "Should use the annotation from the annotation of the method"
         )
+
+
+def _flaky(bad: set):
+    def process(item):
+        if item in bad:
+            raise ValueError(f"bad {item}")
+        return item * 10
+
+    return process
+
+
+def _aflaky(bad: set):
+    sync = _flaky(bad)
+
+    async def process(item):
+        return sync(item)
+
+    return process
+
+
+async def _agen(items):
+    for item in items:
+        yield item
+
+
+async def _run_map(kind: str, retry: Retry, bad: set, items, **kwargs):
+    if kind == "map":
+        return list(retry.map(_flaky(bad), items, **kwargs))
+    if kind == "amap":
+        return [x async for x in retry.amap(_aflaky(bad), items, **kwargs)]
+    gen = _agen(items)
+    return [x async for x in retry.agenmap(_aflaky(bad), gen, **kwargs)]
+
+
+@pytest.mark.parametrize("signal", [ValueError, Exception])
+@pytest.mark.parametrize("kind", ["map", "amap", "agenmap"])
+class TestRetryMapBudget:
+    """The failure budget must not depend on which `signal` is used."""
+
+    async def test_exhausted_item_is_skipped_and_logged(
+        self, kind, signal, caplog
+    ):
+        retry = Retry(signal=signal, count=2)
+        with caplog.at_level("WARNING", logger="escudeiro.misc.functions"):
+            result = await _run_map(kind, retry, {2}, [1, 2, 3])
+        assert result == [10, 30]
+        assert any("2" in rec.getMessage() for rec in caplog.records)
+
+    async def test_threshold_gives_up_after_count_skipped_items(
+        self, kind, signal
+    ):
+        retry = Retry(signal=signal, count=1)
+        assert await _run_map(kind, retry, {2}, [1, 2, 3]) == [10, 30]
+        with pytest.raises(ErrorGroup) as exc_info:
+            await _run_map(kind, retry, {2, 4}, [1, 2, 3, 4, 5])
+        assert any(
+            isinstance(err, RetryError) for err in exc_info.value.exceptions
+        )
+
+    async def test_temperature_forgives_failures_after_successes(
+        self, kind, signal
+    ):
+        retry = Retry(signal=signal, count=1)
+        items = [2, 1, 2, 1, 2, 1]
+        result = await _run_map(kind, retry, {2}, items, strategy="temperature")
+        assert result == [10, 10, 10]
+        with pytest.raises(ErrorGroup):
+            await _run_map(kind, retry, {2}, items, strategy="threshold")
+
+    async def test_unrelated_exceptions_propagate(self, kind, signal):
+        retry = Retry(signal=ValueError, count=2)
+
+        def boom(item):
+            raise KeyError(item)
+
+        async def aboom(item):
+            raise KeyError(item)
+
+        with pytest.raises(KeyError):
+            if kind == "map":
+                _ = list(retry.map(boom, [1]))
+            elif kind == "amap":
+                _ = [x async for x in retry.amap(aboom, [1])]
+            else:
+                _ = [x async for x in retry.agenmap(aboom, _agen([1]))]
+
+
+class TestRetryMapForeignErrorGroup:
+    def test_foreign_error_group_is_not_swallowed(self):
+        def boom(item):
+            raise ErrorGroup("foreign", [ValueError("x")])
+
+        with pytest.raises(ErrorGroup, match="foreign"):
+            _ = list(Retry(signal=TypeError).map(boom, [1, 2]))
+
+
+class TestCasterRuleFailuresAreSafe:
+    def test_invalid_cast_is_a_value_error(self):
+        assert issubclass(InvalidCast, ValueError)
+
+    def test_safe_returns_default_when_rule_fails(self):
+        def positive(value: int) -> bool:
+            return value > 0
+
+        caster = Caster(int).with_rule(positive, "positive")
+        assert caster.safe("-1") is None
+        assert caster.safe("-1", default=7) == 7
+        assert caster.safe("5") == 5
+
+    def test_or_falls_back_when_rule_fails(self):
+        caster = Caster(int).with_rule(lambda v: v > 0, "positive")
+        assert caster.or_(lambda _: 0)("-3") == 0
+
+    def test_safe_cast_wrapper_swallows_rule_failures(self):
+        caster = Caster(int).with_rule(lambda v: v > 0, "positive")
+        assert caster.safe_cast()("-3") is None
+
+
+class TestWalkObjectEdges:
+    def test_index_on_dict_or_scalar_is_missing(self):
+        assert walk_object({"a": {"x": 1}}, "a.[0]") is None
+        assert walk_object({"a": 5}, "a.[0]") is None
+        assert walk_object({"a": "text"}, "a.[0]") is None
+
+    def test_index_still_works_on_list_and_tuple(self):
+        assert walk_object({"a": [1, (2, 3)]}, "a.[1].[1]") == 3
+
+    def test_uses_identity_not_equality(self):
+        class AlwaysEqual:
+            b = 5
+
+            def __eq__(self, other):
+                return True
+
+        assert walk_object({"a": AlwaysEqual()}, "a.b") == 5
+
+
+def test_join_into_datetime_keeps_time_timezone():
+    tz = timezone(timedelta(hours=-3))
+    result = join_into_datetime(date(2024, 1, 2), time(9, 30, tzinfo=tz))
+    assert result.tzinfo is tz
+    assert result.hour == 9
+
+
+def test_join_into_datetime_explicit_tz_wins():
+    tz = timezone(timedelta(hours=-3))
+    result = join_into_datetime(date(2024, 1, 2), time(9, 30, tzinfo=tz), UTC)
+    assert result.tzinfo is UTC

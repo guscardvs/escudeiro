@@ -3,7 +3,7 @@ from typing import Generic, TypeVar, override
 
 import pytest
 
-from escudeiro.misc.lazy import MethodType, lazymethod
+from escudeiro.misc.lazy import _MISSING, MethodType, lazymethod
 
 
 def test_method_type_detection():
@@ -158,9 +158,17 @@ def test_hashable_args_caching():
     assert isinstance(cache_dict, dict)
 
     # Check specific cache keys
-    # The key format is (args, tuple(kwargs.items()))
-    key1 = (("a", "test"), ("b", 1), ("c", True))  # a="test", b=1, no kwargs
-    key2 = (("a", "test"), ("b", 1), ("c", False))  # a="test", b=1, c=False
+    # Each key item is (name, (type, value)) so 1, True and 1.0 stay apart
+    key1 = (
+        ("a", (str, "test")),
+        ("b", (int, 1)),
+        ("c", (bool, True)),
+    )
+    key2 = (
+        ("a", (str, "test")),
+        ("b", (int, 1)),
+        ("c", (bool, False)),
+    )
 
     assert cache_dict[frozenset(key1)] == "test_1_1_1"
     assert cache_dict[frozenset(key2)] == "test_1_0_4"
@@ -199,7 +207,7 @@ def test_unhashable_args_caching():
     assert len(cache_list) == 1
 
     # Cache items are tuples of ((args, kwargs_tuple), result)
-    assert cache_list[0][0] == (("items", list1),)
+    assert cache_list[0][0] == (("items", (list, list1)),)
     assert cache_list[0][1] == "list_3_1"
 
 
@@ -378,7 +386,7 @@ def test_internal_methods():
 
     # Test _get when no value exists
     result = descriptor._get(t, private_name, ("test",), {})
-    assert result is None
+    assert result is _MISSING
 
     # Test _set
     result = descriptor._set(t, "test")
@@ -457,7 +465,7 @@ def test_reset_functionality():
     # Reset specific parameter
     private_name2 = lazymethod.get_private("with_args")
     cache_dict = getattr(t, private_name2)
-    key = (("a", "test"),)
+    key = (("a", (str, "test")),)
     del cache_dict[frozenset(key)]
     assert t.with_args("test") == "test_5"  # Recalculated
 
@@ -681,7 +689,7 @@ def test_exception_does_not_corrupt_cache():
     cache_dict = getattr(obj, private_hash)
     # The key is built via _signature_to_kwargs; for a two-parameter method,
     # the mapping will be {"a": 1, "b": "a"} and the key is frozenset of its items.
-    key_hash = frozenset([("a", 1), ("b", "a")])
+    key_hash = frozenset([("a", (int, 1)), ("b", (str, "a"))])
     assert cache_dict.get(key_hash) == "1_a_3", (
         "Cached value not found in hashable container"
     )
@@ -713,7 +721,12 @@ def test_exception_does_not_corrupt_cache():
     # For mixed, the key is built from the normalized signature.
     # Expected normalized mapping is {"a": 10, "b": ["x"], "c": "y", "d": True}.
     # The key in a list container is stored as a tuple of items (order determined by sorting of keys).
-    expected_key = (("a", 10), ("b", ["x"]), ("c", "y"), ("d", True))
+    expected_key = (
+        ("a", (int, 10)),
+        ("b", (list, ["x"])),
+        ("c", (str, "y")),
+        ("d", (bool, True)),
+    )
     cached_key, cached_value = cache_list[0]
     assert cached_key == expected_key, (
         f"Unexpected key in mixed cache: {cached_key}"
@@ -732,3 +745,109 @@ def test_exception_does_not_corrupt_cache():
         "Subsequent mixed call used cached value"
     )
     assert obj.counter == 0, "Counter changed on a cached call"
+
+
+class TestLazymethodReview:
+    def test_none_result_is_cached_self_only(self):
+        class A:
+            calls = 0
+
+            @lazymethod
+            def m(self):
+                self.calls += 1
+
+        a = A()
+        assert a.m() is None
+        assert a.m() is None
+        assert a.calls == 1
+        assert lazymethod.is_initialized(a, "m")
+
+    def test_none_result_is_cached_with_args(self):
+        class A:
+            calls = 0
+
+            @lazymethod
+            def m(self, x: int):
+                self.calls += 1
+
+        a = A()
+        assert a.m(1) is None
+        assert a.m(1) is None
+        assert a.calls == 1
+        assert a.m(2) is None
+        assert a.calls == 2
+
+    def test_extra_positional_args(self):
+        class A:
+            calls = 0
+
+            @lazymethod
+            def m(self, *a: int):
+                self.calls += 1
+                return sum(a)
+
+        a = A()
+        assert a.m(1, 2) == 3
+        assert a.m(1, 2) == 3
+        assert a.m(1, 2, 3) == 6
+        assert a.m() == 0
+        assert a.calls == 3
+
+    def test_extra_positional_and_named(self):
+        class A:
+            calls = 0
+
+            @lazymethod
+            def m(self, first: int, *rest: int):
+                self.calls += 1
+                return first, rest
+
+        a = A()
+        assert a.m(1, 2, 3) == (1, (2, 3))
+        assert a.m(1, 2, 3) == (1, (2, 3))
+        assert a.m(first=1) == (1, ())
+        assert a.calls == 2
+
+    def test_var_keyword(self):
+        class A:
+            calls = 0
+
+            @lazymethod
+            def m(self, a: int, **kw: int):
+                self.calls += 1
+                return a, dict(kw)
+
+        a = A()
+        assert a.m(1, x=2) == (1, {"x": 2})
+        assert a.m(1, x=2) == (1, {"x": 2})
+        assert a.m(1, y=2) == (1, {"y": 2})
+        assert a.calls == 2
+
+    def test_keyword_only_with_default(self):
+        class A:
+            calls = 0
+
+            @lazymethod
+            def m(self, a: int, *, flag: bool = False):
+                self.calls += 1
+                return a, flag
+
+        a = A()
+        assert a.m(1) == (1, False)
+        assert a.m(1, flag=False) == (1, False)
+        assert a.m(1, flag=True) == (1, True)
+        assert a.calls == 2
+
+    @pytest.mark.parametrize("annotation", [int, list])
+    def test_cache_keys_keep_types_apart(self, annotation):
+        # int -> dict cache path, list -> list cache path
+        class A:
+            @lazymethod
+            def m(self, x: annotation):
+                return repr(x)
+
+        a = A()
+        assert a.m(1) == "1"
+        assert a.m(True) == "True"
+        assert a.m(1.0) == "1.0"
+        assert a.m(1) == "1"

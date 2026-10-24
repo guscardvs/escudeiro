@@ -6,7 +6,7 @@ class KeyAlreadyRead(SquireError, KeyError):
     """Raised when an attempt to write a key from a mutable mapping is already read"""
 
 
-class InvalidCast(SquireError):
+class InvalidCast(SquireError, ValueError):
     """
     Exception raised when the configuration cast callable raises an error.
 

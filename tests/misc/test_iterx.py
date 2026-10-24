@@ -405,10 +405,9 @@ class TestExcludeNone:
         assert result == [1, {"b": [1, 2]}]
 
     def test_tuple_with_none(self):
-        # Tuples are converted to lists in the implementation
         result = exclude_none((1, None, 2, (3, None, 4)))
-        assert isinstance(result, list)
-        assert result == [1, 2, [3, 4]]
+        assert isinstance(result, tuple)
+        assert result == (1, 2, (3, 4))
 
     def test_set_with_none(self):
         # Order isn't guaranteed with sets, so just check membership
@@ -568,3 +567,62 @@ class TestGroupValues:
         data = [{"category": "A"}, {"type": "B"}]
         with pytest.raises(KeyError):
             _ = group_values(data, "category")
+
+
+class TestAnyAllNoneItems:
+    async def test_aany_matches_none_item(self):
+        assert await aany(async_generator([None, 1]), lambda x: x is None)
+
+    async def test_aany_no_match(self):
+        assert not await aany(async_generator([1, 2]), lambda x: x is None)
+
+    async def test_aall_false_for_falsy_none(self):
+        assert await aall(async_generator([None])) is False
+        assert await aall(async_generator([1, None, 2])) is False
+
+    async def test_aall_true_when_predicate_accepts_none(self):
+        assert await aall(async_generator([None, None]), lambda x: x is None)
+
+
+class TestAisliceDoesNotOverConsume:
+    async def test_stop_not_swallowed_with_step(self):
+        src = async_generator(list(range(10)))
+        got = [x async for x in aislice(src, 0, 5, 2)]
+        assert got == [0, 2, 4]
+        assert await anext(src) == 5
+
+    async def test_start_stop_step_leaves_next_item(self):
+        src = async_generator(list(range(10)))
+        got = [x async for x in aislice(src, 1, 8, 3)]
+        assert got == [1, 4, 7]
+        assert await anext(src) == 8
+
+    async def test_step_larger_than_source(self):
+        got = [x async for x in aislice(async_generator([1, 2, 3]), 0, None, 5)]
+        assert got == [1]
+
+
+class TestExcludeNoneContainers:
+    def test_set_of_tuples(self):
+        assert exclude_none({(1, 2), 3, None}) == {(1, 2), 3}
+
+    def test_set_of_nested_tuples_with_none(self):
+        assert exclude_none({(1, None, (2, None)), 3}) == {(1, (2,)), 3}
+
+    def test_tuples_are_preserved_at_any_depth(self):
+        result = exclude_none([(1, None), {"a": (None, 2)}, None])
+        assert result == [(1,), {"a": (2,)}]
+        assert isinstance(result[0], tuple)
+
+    def test_top_level_tuple_stays_a_tuple(self):
+        assert exclude_none((1, None, (2, None))) == (1, (2,))
+
+
+class TestFlattenBytes:
+    def test_bytearray_and_memoryview_are_atoms(self):
+        arr = bytearray(b"ab")
+        view = memoryview(b"cd")
+        result = flatten([arr, [view, b"ef"], "gh"])
+        assert result[0] is arr
+        assert result[1] is view
+        assert result[2:] == [b"ef", "gh"]

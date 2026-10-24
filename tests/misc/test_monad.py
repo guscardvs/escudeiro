@@ -228,3 +228,75 @@ class TestIf_:
         result = f(2)
         assert isinstance(result, Left)
         assert result.value == -1
+
+
+class TestNothingChaining:
+    def test_maybe_chain_after_none(self):
+        result = Monad.pure(1).maybe(lambda _: None).maybe(lambda x: x + 1)
+        assert result is Nothing
+
+    def test_maybe_chain_with_values(self):
+        result = Monad.pure(1).maybe(lambda x: x + 1).maybe(lambda x: x * 3)
+        assert isinstance(result, Monad)
+        assert result.get_value() == 6
+
+    def test_null_monad_pure_returns_singleton(self):
+        assert NullMonad.pure(1) is Nothing
+
+    def test_null_monad_interface_short_circuits(self):
+        assert Nothing.maybe(lambda x: x) is Nothing
+        assert Nothing.map(lambda x: x) is Nothing
+        assert Nothing.bind(lambda x: Monad.pure(x)) is Nothing
+
+
+class TestAsyncCellResolveTwice:
+    def test_resolve_caches_result(self):
+        calls = []
+
+        async def coro(value):
+            calls.append(value)
+            return value * 2
+
+        helper = AsyncMonadHelper(None)
+        try:
+            cell = helper.wrap_lazy(coro)(21)
+            assert cell.resolve() == 42
+            assert cell.resolve() == 42
+            assert calls == [21]
+        finally:
+            helper.runner.close()
+
+
+class TestLazyMonadShortCircuit:
+    def test_nothing_parent_is_returned_unchanged(self):
+        ran = []
+
+        def second(value):
+            ran.append(value)
+            return Monad.pure(value)
+
+        lazy = LazyMonad(1).bind(lambda _: Nothing).bind(second)
+        assert resolve_lazy(lazy) is Nothing
+        assert ran == []
+
+    def test_left_parent_is_returned_unchanged(self):
+        ran = []
+        left = Left("boom")
+
+        def second(value):
+            ran.append(value)
+            return Monad.pure(value)
+
+        lazy = LazyMonad(1).bind(lambda _: left).bind(second)
+        assert resolve_lazy(lazy) is left
+        assert ran == []
+
+    def test_map_after_nothing(self):
+        lazy = LazyMonad(1).bind(lambda _: Nothing).map(lambda x: x + 1)
+        assert resolve_lazy(lazy) is Nothing
+
+    def test_happy_chain_unaffected(self):
+        lazy = (
+            LazyMonad(1).bind(lambda x: Monad.pure(x + 1)).map(lambda x: x * 5)
+        )
+        assert resolve_lazy(lazy).get_value() == 10
